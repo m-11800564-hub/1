@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import pandas as pd
 
 # Page Configuration
 st.set_page_config(page_title="ACCCIM Neural Engine", page_icon="🧬", layout="wide")
@@ -65,7 +66,7 @@ except Exception as e:
     st.error(f"Error loading model weights ('model.pth'): {e}")
 
 # =====================================================================
-# 3. INTERACTIVE PRESET VALIDATION SAMPLES
+# 3. INTERACTIVE PRESET VALIDATION SAMPLES & UI
 # =====================================================================
 st.title("🧬 ACCCIM Neural Engine")
 st.subheader("Diagnostic Report & Clinical Triage Dashboard")
@@ -80,6 +81,46 @@ SAMPLES = {
 # State management for preset selection
 if "gene_input" not in st.session_state:
     st.session_state["gene_input"] = SAMPLES["Normal"]
+
+# EXPANDABLE GENE REFERENCE TABLE FOR USERS
+with st.expander("📋 View 25-Gene Panel Index Reference", expanded=False):
+    gene_panel_data = {
+        "Index": list(range(25)),
+        "Gene Symbol": [
+            "EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1",
+            "SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A",
+            "RB1", "MYC", "CD274", "AHR", "CCND1", "MUC16"
+        ],
+        "Associated Subtype / Clinical Role": [
+            "🔴 LUAD Primary Driver (Targeted TKI / Osimertinib)",
+            "🔴 LUAD Driver (KRAS G12C Inhibitors)",
+            "🔴 LUAD Driver Fusion (ALK TKI / Alectinib)",
+            "🔴 LUAD Variant (Exon 14 Skipping / Capmatinib)",
+            "🔴 LUAD Fusion Driver",
+            "🔴 LUAD Fusion Driver",
+            "🔴 LUAD Variant (HER2)",
+            "🔴 LUAD Variant (V600E)",
+            "🧬 Universal Tumor Suppressor",
+            "🧬 LUAD Co-mutation / Immunotherapy Resistance",
+            "🧬 NRF2 Stress Pathway / Co-mutation",
+            "🔴 LUAD Lineage Marker (TTF-1)",
+            "🟠 LUSC Lineage Master Regulator & Amplification Driver",
+            "🟠 LUSC Diagnostic Lineage Marker (p63)",
+            "🟠 LUSC Squamous Cytokeratin Marker",
+            "🟠 LUSC Squamous Cytokeratin Marker",
+            "🟠 LUSC Oncogenic Pathway Driver",
+            "🟠 LUSC Receptor Tyrosine Kinase Amplification",
+            "🟠 LUSC Cell-Cycle Alteration (p16 Loss)",
+            "🧬 Cell-Cycle Regulation",
+            "🧬 Oncogenic Transcription Factor",
+            "💉 PD-L1 Expression / Immunotherapy Target",
+            "🧬 Aryl Hydrocarbon Receptor",
+            "🧬 Cyclin D1 Cell-Cycle Control",
+            "🧬 Mucin / Biomarker Expression"
+        ]
+    }
+    df_panel = pd.DataFrame(gene_panel_data)
+    st.dataframe(df_panel, use_container_width=True, hide_index=True)
 
 st.markdown("### 🧪 Load Test Validation Preset Vector")
 col1, col2, col3 = st.columns(3)
