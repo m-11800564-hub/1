@@ -1,145 +1,3 @@
-import streamlit as st
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import pandas as pd
-
-# Page Configuration
-st.set_page_config(page_title="ACCCIM Neural Engine", page_icon="🧬", layout="wide")
-
-# =====================================================================
-# 1. MODEL ARCHITECTURE (ACCCIM Multi-Task Neural Network)
-# =====================================================================
-class ACCCIMMultiTaskModel(nn.Module):
-    def __init__(self, input_dim=25, hidden_dim1=256, hidden_dim2=128):
-        super(ACCCIMMultiTaskModel, self).__init__()
-
-        # Shared Encoder Backbone
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim1),
-            nn.BatchNorm1d(hidden_dim1),
-            nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(hidden_dim1, hidden_dim2),
-            nn.BatchNorm1d(hidden_dim2),
-            nn.ReLU()
-        )
-
-        # Task 1: Classification Head (Histology Subtype)
-        self.classification_head = nn.Sequential(
-            nn.Linear(hidden_dim2, 64),
-            nn.ReLU(),
-            nn.Linear(64, 3) # 0: Normal, 1: LUAD, 2: LUSC
-        )
-
-        # Task 2: Regression Head (Driver Pathway Load Score)
-        self.regression_head = nn.Sequential(
-            nn.Linear(hidden_dim2, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid() # Bounded Score [0.0 - 1.0]
-        )
-
-    def forward(self, x):
-        embeddings = self.encoder(x)
-        clf_logits = self.classification_head(embeddings)
-        reg_output = self.regression_head(embeddings)
-        return clf_logits, reg_output, embeddings
-
-# =====================================================================
-# 2. LOAD TRAINED MODEL WEIGHTS
-# =====================================================================
-@st.cache_resource
-def load_model():
-    model = ACCCIMMultiTaskModel(input_dim=25)
-    state_dict = torch.load("model.pth", map_location=torch.device('cpu'))
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
-
-try:
-    model = load_model()
-    model_ready = True
-except Exception as e:
-    model_ready = False
-    st.error(f"Error loading model weights ('model.pth'): {e}")
-
-# =====================================================================
-# 3. INTERACTIVE PRESET VALIDATION SAMPLES & UI
-# =====================================================================
-st.title("🧬 ACCCIM Neural Engine")
-st.subheader("Diagnostic Report & Clinical Triage Dashboard")
-
-# Define sample preset vectors
-SAMPLES = {
-    "Normal": "1.5, 1.2, 1.4, 1.1, 1.6, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1",
-    "LUAD": "18.5, 14.2, 12.0, 16.8, 11.4, 15.0, 13.1, 1.8, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2",
-    "LUSC": "1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 19.1, 17.8, 16.4, 18.2, 12.5, 14.0, 10.5, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3"
-}
-
-# State management for preset selection
-if "gene_input" not in st.session_state:
-    st.session_state["gene_input"] = SAMPLES["Normal"]
-
-# EXPANDABLE GENE REFERENCE TABLE FOR USERS
-with st.expander("📋 View 25-Gene Panel Index Reference", expanded=False):
-    gene_panel_data = {
-        "Index": list(range(25)),
-        "Gene Symbol": [
-            "EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1",
-            "SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A",
-            "RB1", "MYC", "CD274", "AHR", "CCND1", "MUC16"
-        ],
-        "Associated Subtype / Clinical Role": [
-            "🔴 LUAD Primary Driver (Targeted TKI / Osimertinib)",
-            "🔴 LUAD Driver (KRAS G12C Inhibitors)",
-            "🔴 LUAD Driver Fusion (ALK TKI / Alectinib)",
-            "🔴 LUAD Variant (Exon 14 Skipping / Capmatinib)",
-            "🔴 LUAD Fusion Driver",
-            "🔴 LUAD Fusion Driver",
-            "🔴 LUAD Variant (HER2)",
-            "🔴 LUAD Variant (V600E)",
-            "🧬 Universal Tumor Suppressor",
-            "🧬 LUAD Co-mutation / Immunotherapy Resistance",
-            "🧬 NRF2 Stress Pathway / Co-mutation",
-            "🔴 LUAD Lineage Marker (TTF-1)",
-            "🟠 LUSC Lineage Master Regulator & Amplification Driver",
-            "🟠 LUSC Diagnostic Lineage Marker (p63)",
-            "🟠 LUSC Squamous Cytokeratin Marker",
-            "🟠 LUSC Squamous Cytokeratin Marker",
-            "🟠 LUSC Oncogenic Pathway Driver",
-            "🟠 LUSC Receptor Tyrosine Kinase Amplification",
-            "🟠 LUSC Cell-Cycle Alteration (p16 Loss)",
-            "🧬 Cell-Cycle Regulation",
-            "🧬 Oncogenic Transcription Factor",
-            "💉 PD-L1 Expression / Immunotherapy Target",
-            "🧬 Aryl Hydrocarbon Receptor",
-            "🧬 Cyclin D1 Cell-Cycle Control",
-            "🧬 Mucin / Biomarker Expression"
-        ]
-    }
-    df_panel = pd.DataFrame(gene_panel_data)
-    st.dataframe(df_panel, use_container_width=True, hide_index=True)
-
-st.markdown("### 🧪 Load Test Validation Preset Vector")
-col1, col2, col3 = st.columns(3)
-
-if col1.button("🟢 Load Normal Sample"):
-    st.session_state["gene_input"] = SAMPLES["Normal"]
-
-if col2.button("🔴 Load LUAD Sample"):
-    st.session_state["gene_input"] = SAMPLES["LUAD"]
-
-if col3.button("🟠 Load LUSC Sample"):
-    st.session_state["gene_input"] = SAMPLES["LUSC"]
-
-input_text = st.text_area(
-    "Paste 25 Raw Gene Expression Log-Counts (Comma-Separated):",
-    value=st.session_state["gene_input"],
-    height=100
-)
-
 # =====================================================================
 # 4. INFERENCE & DUAL-HEAD DISPLAY PIPELINE
 # =====================================================================
@@ -149,26 +7,35 @@ if st.button("Run Model Inference", type="primary"):
         st.stop()
         
     try:
-        # Parse inputs
+        # 1. Parse raw gene log-counts from user input
         clean_values = [float(x.strip()) for x in input_text.replace('\n', ',').replace(' ', ',').split(',') if x.strip()]
         if len(clean_values) < 25:
-            clean_values += [1.5] * (25 - len(clean_values))
+            clean_values += [1.0] * (25 - len(clean_values))  # Neutral baseline padding
         else:
             clean_values = clean_values[:25]
 
-        # Normalization (Standard Scaling matching training baseline)
+        # 2. EXACT COLAB NORMALIZATION PIPELINE
         raw_arr = np.array(clean_values, dtype=np.float32)
-        norm_arr = (raw_arr - 1.8) / 1.2
-        tensor_input = torch.tensor(norm_arr, dtype=torch.float32).unsqueeze(0)
+        raw_tensor = torch.tensor(raw_arr, dtype=torch.float32)
+        
+        # Log2 Transform + Sample-level Z-Score (Matches Colab)
+        log_tensor = torch.log2(raw_tensor + 1.0)
+        std_val = log_tensor.std()
+        # Handle zero standard deviation (e.g., if all input values are identical)
+        std_safe = std_val + 1e-6 if std_val != 0 else 1.0
+        z_score_tensor = (log_tensor - log_tensor.mean()) / std_safe
+        
+        # Add batch dimension: Shape -> (1, 25)
+        model_input = z_score_tensor.unsqueeze(0)
 
-        # Forward Pass
+        # 3. Model Forward Pass
         with torch.no_grad():
-            logits, reg_out, _ = model(tensor_input)
+            logits, reg_out, _ = model(model_input)
             probs = F.softmax(logits, dim=1).numpy()[0]
             pathway_score = float(reg_out.numpy()[0][0])
             pred_class_id = int(torch.argmax(logits, dim=1).item())
 
-        # Subtype Map
+        # Subtype Display Map
         class_map = {
             0: "Normal Baseline / Control", 
             1: "Lung Adenocarcinoma (LUAD)", 
@@ -179,8 +46,8 @@ if st.button("Run Model Inference", type="primary"):
         luad_genes = ["EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1"]
         lusc_genes = ["SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A"]
 
-        # Determine Specific Driver Mutation Head Label
-        if pred_class_id == 0 or pathway_score < 0.20:
+        # Determine Driver Mutation Status based on class and gene spikes
+        if pred_class_id == 0 or pathway_score < 0.25:
             driver_head_status = "None Detected"
         elif pred_class_id == 1:
             top_gene_idx = np.argmax(raw_arr[:12])
