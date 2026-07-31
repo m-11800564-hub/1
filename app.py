@@ -137,6 +137,3 @@ if st.button("Run Model Inference", type="primary"):
 
     except Exception as e:
         st.error(f"Inference Error: {e}")
-
-        from google.colab import files
-files.download("app.py")
