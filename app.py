@@ -1,28 +1,45 @@
 import streamlit as st
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 st.set_page_config(page_title="ACCCIM Neural Engine", page_icon="🧬")
 
-# 1. DEFINE MODEL ARCHITECTURE
-class GenomicClassifier(nn.Module):
-    def __init__(self):
-        super(GenomicClassifier, self).__init__()
+# 1. Model Architecture matching your trained weights
+class ACCCIMMultiTaskModel(nn.Module):
+    def __init__(self, input_dim=25, hidden_dim1=256, hidden_dim2=128):
+        super(ACCCIMMultiTaskModel, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(25, 64),
+            nn.Linear(input_dim, hidden_dim1),
+            nn.BatchNorm1d(hidden_dim1),
             nn.ReLU(),
-            nn.Linear(64, 32),
+            nn.Dropout(p=0.3),
+            nn.Linear(hidden_dim1, hidden_dim2),
+            nn.BatchNorm1d(hidden_dim2),
+            nn.ReLU()
+        )
+        self.classification_head = nn.Sequential(
+            nn.Linear(hidden_dim2, 64),
             nn.ReLU(),
-            nn.Linear(32, 3)
+            nn.Linear(64, 3)
+        )
+        self.regression_head = nn.Sequential(
+            nn.Linear(hidden_dim2, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
-        return self.encoder(x)
+        embeddings = self.encoder(x)
+        clf_logits = self.classification_head(embeddings)
+        reg_output = self.regression_head(embeddings)
+        return clf_logits, reg_output, embeddings
 
-# 2. LOAD MODEL WEIGHTS
+# 2. Load Model
 @st.cache_resource
 def load_model():
-    model = GenomicClassifier()
+    model = ACCCIMMultiTaskModel(input_dim=25)
     state_dict = torch.load("model.pth", map_location=torch.device('cpu'))
     model.load_state_dict(state_dict)
     model.eval()
@@ -35,7 +52,7 @@ except Exception as e:
     model_ready = False
     st.error(f"Error loading model file: {e}")
 
-# 3. UI DASHBOARD
+# 3. User Interface
 st.title("🧬 ACCCIM Neural Engine")
 st.subheader("Diagnostic Report & Clinical Triage Dashboard")
 
@@ -64,12 +81,17 @@ if st.button("Run Model Inference", type="primary"):
         model_input = z_score_tensor.unsqueeze(0)
 
         with torch.no_grad():
-            logits = model(model_input)
-            prediction_idx = torch.argmax(logits, dim=1).item()
+            logits, reg_out, _ = model(model_input)
+            probs = F.softmax(logits, dim=1).numpy()[0]
+            pathway_score = float(reg_out.numpy()[0][0])
+            pred_class_id = int(torch.argmax(logits, dim=1).item())
+
+        class_map = {0: "Normal / Benign Baseline", 1: "Lung Adenocarcinoma (LUAD)", 2: "Lung Squamous Cell (LUSC)"}
 
         st.success("PyTorch Forward Pass Completed Successfully!")
-        st.write(f"**Predicted Class Index:** {prediction_idx}")
-        st.write(f"**Output Logits:** {logits.numpy().tolist()}")
+        st.write(f"**Predicted Histology:** {class_map[pred_class_id]}")
+        st.write(f"**Confidence:** {probs[pred_class_id]*100:.2f}%")
+        st.write(f"**Driver Pathway Load Score:** {pathway_score:.3f}")
 
     except Exception as e:
         st.error(f"Inference Error: {e}")
