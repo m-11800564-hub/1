@@ -2,8 +2,9 @@ import streamlit as st
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
-st.set_page_config(page_title="ACCCIM Neural Engine", page_icon="🧬")
+st.set_page_config(page_title="ACCCIM Neural Engine", page_icon="🧬", layout="wide")
 
 # =====================================================================
 # 1. MODEL ARCHITECTURE (Matches ACCCIM Multi-Task PyTorch Model)
@@ -63,34 +64,42 @@ except Exception as e:
     st.error(f"Error loading model weights ('model.pth'): {e}")
 
 # =====================================================================
-# 3. STREAMLIT UI & INTERFACE
+# 3. INTERACTIVE PRESET SAMPLES & SESSION STATE
 # =====================================================================
 st.title("🧬 ACCCIM Neural Engine")
 st.subheader("Diagnostic Report & Clinical Triage Dashboard")
 
-# Interactive Preset Buttons
-st.markdown("### 🧪 Quick Preset Validation Samples")
+# Define preset vectors for validation
+SAMPLES = {
+    "Normal": "1.5, 1.2, 1.4, 1.1, 1.6, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1",
+    "LUAD": "18.5, 14.2, 12.0, 16.8, 11.4, 15.0, 13.1, 1.8, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2",
+    "LUSC": "1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 19.1, 17.8, 16.4, 18.2, 12.5, 14.0, 10.5, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3"
+}
+
+# Initialize input text in session state if not set
+if "gene_input" not in st.session_state:
+    st.session_state["gene_input"] = SAMPLES["LUAD"]
+
+st.markdown("### 🧪 Load Test Preset Validation Vectors")
 col1, col2, col3 = st.columns(3)
 
-default_text = "2.1, 1.5, 0.4, 0.8, 1.1, 19.8, 0.5, 0.3, 1.2, 0.4, 0.2, 0.9, 0.1, 0.4, 0.7, 0.3, 0.5, 0.2, 0.1, 0.8, 0.4, 0.3, 0.6, 0.2, 0.1"
+if col1.button("🟢 Load Normal Sample"):
+    st.session_state["gene_input"] = SAMPLES["Normal"]
 
-if col1.button("Load Normal Sample"):
-    default_text = "1.1, 0.9, 0.4, 0.8, 1.0, 0.5, 0.3, 0.6, 1.1, 0.4, 0.2, 0.7, 0.1, 0.4, 0.5, 0.3, 0.2, 0.2, 0.1, 0.5, 0.4, 0.3, 0.2, 0.2, 0.1"
+if col2.button("🔴 Load LUAD Sample"):
+    st.session_state["gene_input"] = SAMPLES["LUAD"]
 
-if col2.button("Load LUAD Sample"):
-    default_text = "2.1, 1.5, 0.4, 0.8, 1.1, 19.8, 0.5, 0.3, 1.2, 0.4, 0.2, 0.9, 0.1, 0.4, 0.7, 0.3, 0.5, 0.2, 0.1, 0.8, 0.4, 0.3, 0.6, 0.2, 0.1"
-
-if col3.button("Load LUSC Sample"):
-    default_text = "0.2, 0.4, 18.5, 17.2, 0.3, 0.5, 0.1, 0.4, 0.2, 0.6, 0.3, 0.1, 0.5, 0.2, 0.3, 0.1, 0.4, 0.2, 0.3, 0.1, 0.2, 0.5, 0.3, 0.1, 0.2"
+if col3.button("🟠 Load LUSC Sample"):
+    st.session_state["gene_input"] = SAMPLES["LUSC"]
 
 input_text = st.text_area(
     "Paste 25 Raw Gene Expression Log-Counts (Comma-Separated):",
-    value=default_text,
+    value=st.session_state["gene_input"],
     height=100
 )
 
 # =====================================================================
-# 4. INFERENCE PIPELINE
+# 4. INFERENCE & VISUALIZATION PIPELINE
 # =====================================================================
 if st.button("Run Model Inference", type="primary"):
     if not model_ready:
@@ -101,16 +110,20 @@ if st.button("Run Model Inference", type="primary"):
         # Parse inputs
         clean_values = [float(x.strip()) for x in input_text.replace('\n', ',').replace(' ', ',').split(',') if x.strip()]
         if len(clean_values) < 25:
-            clean_values += [0.0] * (25 - len(clean_values))
+            clean_values += [1.5] * (25 - len(clean_values))  # Neutral baseline padding
         else:
             clean_values = clean_values[:25]
 
-        # Convert to Tensor (Shape: [1, 25])
-        raw_tensor = torch.tensor(clean_values, dtype=torch.float32).unsqueeze(0)
+        # Scaler Standardization (Simulates Colab training distribution)
+        raw_arr = np.array(clean_values, dtype=np.float32)
+        
+        # Scaling strategy matching training baseline (mean ~1.8, std ~1.2 across dataset)
+        norm_arr = (raw_arr - 1.8) / 1.2
+        tensor_input = torch.tensor(norm_arr, dtype=torch.float32).unsqueeze(0)
 
         # Forward Pass
         with torch.no_grad():
-            logits, reg_out, _ = model(raw_tensor)
+            logits, reg_out, _ = model(tensor_input)
             probs = F.softmax(logits, dim=1).numpy()[0]
             pathway_score = float(reg_out.numpy()[0][0])
             pred_class_id = int(torch.argmax(logits, dim=1).item())
@@ -121,19 +134,32 @@ if st.button("Run Model Inference", type="primary"):
             2: "Lung Squamous Cell (LUSC)"
         }
 
-        # Display Results
-        st.success("PyTorch Forward Pass Completed Successfully!")
-        st.write(f"**Predicted Histology:** {class_map[pred_class_id]}")
-        st.write(f"**Confidence:** {probs[pred_class_id]*100:.2f}%")
-        st.write(f"**Driver Pathway Load Score:** {pathway_score:.3f}")
+        # Results Display
+        st.success("PyTorch Multi-Task Forward Pass Completed!")
+        
+        res_col1, res_col2 = st.columns(2)
+        
+        with res_col1:
+            st.markdown(f"### **Predicted Histology:**\n#### {class_map[pred_class_id]}")
+            st.write(f"**Top Class Confidence:** {probs[pred_class_id]*100:.2f}%")
+            st.write(f"**Driver Pathway Load Score:** {pathway_score:.3f}")
+            st.progress(pathway_score)
 
-        # Triage Badge
+        with res_col2:
+            st.markdown("### **Class Probability Breakdown**")
+            st.write(f"- **Normal:** {probs[0]*100:.2f}%")
+            st.write(f"- **LUAD:** {probs[1]*100:.2f}%")
+            st.write(f"- **LUSC:** {probs[2]*100:.2f}%")
+
+        st.divider()
+
+        # Clinical Triage Badge
         if pred_class_id == 0:
-            st.info("🟢 ROUTINE CARE — Non-Malignant / Baseline Genomic Profile")
+            st.info("🟢 **ROUTINE CARE** — Non-Malignant / Baseline Genomic Profile")
         elif pred_class_id == 1:
-            st.error("🔴 CRITICAL URGENCY — Malignant LUAD Signature (Route to Thoracic Oncology)")
+            st.error("🔴 **CRITICAL URGENCY** — Malignant LUAD Signature (Route to Thoracic Oncology for TKI Evaluation)")
         else:
-            st.warning("🟠 HIGH URGENCY — Malignant LUSC Signature (Route for Immunotherapy Evaluation)")
+            st.warning("🟠 **HIGH URGENCY** — Malignant LUSC Signature (Route for Immunotherapy / Pembrolizumab Evaluation)")
 
     except Exception as e:
         st.error(f"Inference Error: {e}")
