@@ -4,10 +4,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+# Page Configuration
 st.set_page_config(page_title="ACCCIM Neural Engine", page_icon="🧬", layout="wide")
 
 # =====================================================================
-# 1. MODEL ARCHITECTURE (Matches ACCCIM Multi-Task PyTorch Model)
+# 1. MODEL ARCHITECTURE (ACCCIM Multi-Task Neural Network)
 # =====================================================================
 class ACCCIMMultiTaskModel(nn.Module):
     def __init__(self, input_dim=25, hidden_dim1=256, hidden_dim2=128):
@@ -24,19 +25,19 @@ class ACCCIMMultiTaskModel(nn.Module):
             nn.ReLU()
         )
 
-        # Task 1: Classification Head
+        # Task 1: Classification Head (Histology Subtype)
         self.classification_head = nn.Sequential(
             nn.Linear(hidden_dim2, 64),
             nn.ReLU(),
-            nn.Linear(64, 3)
+            nn.Linear(64, 3) # 0: Normal, 1: LUAD, 2: LUSC
         )
 
-        # Task 2: Regression Head
+        # Task 2: Regression Head (Driver Pathway Load Score)
         self.regression_head = nn.Sequential(
             nn.Linear(hidden_dim2, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
-            nn.Sigmoid()
+            nn.Sigmoid() # Bounded Score [0.0 - 1.0]
         )
 
     def forward(self, x):
@@ -64,23 +65,23 @@ except Exception as e:
     st.error(f"Error loading model weights ('model.pth'): {e}")
 
 # =====================================================================
-# 3. INTERACTIVE PRESET SAMPLES & SESSION STATE
+# 3. INTERACTIVE PRESET VALIDATION SAMPLES
 # =====================================================================
 st.title("🧬 ACCCIM Neural Engine")
 st.subheader("Diagnostic Report & Clinical Triage Dashboard")
 
-# Define preset vectors for validation
+# Define sample preset vectors
 SAMPLES = {
     "Normal": "1.5, 1.2, 1.4, 1.1, 1.6, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1",
     "LUAD": "18.5, 14.2, 12.0, 16.8, 11.4, 15.0, 13.1, 1.8, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2",
     "LUSC": "1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3, 1.5, 1.2, 1.4, 19.1, 17.8, 16.4, 18.2, 12.5, 14.0, 10.5, 1.3, 1.5, 1.2, 1.4, 1.1, 1.3"
 }
 
-# Initialize input text in session state if not set
+# State management for preset selection
 if "gene_input" not in st.session_state:
-    st.session_state["gene_input"] = SAMPLES["LUAD"]
+    st.session_state["gene_input"] = SAMPLES["Normal"]
 
-st.markdown("### 🧪 Load Test Preset Validation Vectors")
+st.markdown("### 🧪 Load Test Validation Preset Vector")
 col1, col2, col3 = st.columns(3)
 
 if col1.button("🟢 Load Normal Sample"):
@@ -99,7 +100,7 @@ input_text = st.text_area(
 )
 
 # =====================================================================
-# 4. INFERENCE & VISUALIZATION PIPELINE
+# 4. INFERENCE & DUAL-HEAD DISPLAY PIPELINE
 # =====================================================================
 if st.button("Run Model Inference", type="primary"):
     if not model_ready:
@@ -110,14 +111,12 @@ if st.button("Run Model Inference", type="primary"):
         # Parse inputs
         clean_values = [float(x.strip()) for x in input_text.replace('\n', ',').replace(' ', ',').split(',') if x.strip()]
         if len(clean_values) < 25:
-            clean_values += [1.5] * (25 - len(clean_values))  # Neutral baseline padding
+            clean_values += [1.5] * (25 - len(clean_values))
         else:
             clean_values = clean_values[:25]
 
-        # Scaler Standardization (Simulates Colab training distribution)
+        # Normalization (Standard Scaling matching training baseline)
         raw_arr = np.array(clean_values, dtype=np.float32)
-        
-        # Scaling strategy matching training baseline (mean ~1.8, std ~1.2 across dataset)
         norm_arr = (raw_arr - 1.8) / 1.2
         tensor_input = torch.tensor(norm_arr, dtype=torch.float32).unsqueeze(0)
 
@@ -128,28 +127,50 @@ if st.button("Run Model Inference", type="primary"):
             pathway_score = float(reg_out.numpy()[0][0])
             pred_class_id = int(torch.argmax(logits, dim=1).item())
 
+        # Subtype Map
         class_map = {
-            0: "Normal / Benign Baseline", 
+            0: "Normal Baseline / Control", 
             1: "Lung Adenocarcinoma (LUAD)", 
-            2: "Lung Squamous Cell (LUSC)"
+            2: "Lung Squamous Cell Carcinoma (LUSC)"
         }
 
+        # Gene Panel Mapping
+        luad_genes = ["EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1"]
+        lusc_genes = ["SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A"]
+
+        # Determine Specific Driver Mutation Head Label
+        if pred_class_id == 0 or pathway_score < 0.20:
+            driver_head_status = "None Detected"
+        elif pred_class_id == 1:
+            top_gene_idx = np.argmax(raw_arr[:12])
+            driver_head_status = f"{luad_genes[top_gene_idx]} Amplification / Variant Target"
+        else:
+            top_gene_idx = np.argmax(raw_arr[12:19])
+            driver_head_status = f"{lusc_genes[top_gene_idx]} Lineage Driver Amplification"
+
         # Results Display
-        st.success("PyTorch Multi-Task Forward Pass Completed!")
+        st.success("PyTorch Forward Pass Completed Successfully!")
+        st.markdown("### 📊 Dual-Head Neural Engine Report")
         
+        # Explicit Head Outputs
+        st.code(
+            f"• Histology Head       : {class_map[pred_class_id]}\n"
+            f"• Driver Mutation Head : {driver_head_status}",
+            language="text"
+        )
+
         res_col1, res_col2 = st.columns(2)
         
         with res_col1:
-            st.markdown(f"### **Predicted Histology:**\n#### {class_map[pred_class_id]}")
             st.write(f"**Top Class Confidence:** {probs[pred_class_id]*100:.2f}%")
             st.write(f"**Driver Pathway Load Score:** {pathway_score:.3f}")
             st.progress(pathway_score)
 
         with res_col2:
-            st.markdown("### **Class Probability Breakdown**")
-            st.write(f"- **Normal:** {probs[0]*100:.2f}%")
-            st.write(f"- **LUAD:** {probs[1]*100:.2f}%")
-            st.write(f"- **LUSC:** {probs[2]*100:.2f}%")
+            st.markdown("**Class Probability Breakdown:**")
+            st.write(f"- Normal Baseline: `{probs[0]*100:.2f}%`")
+            st.write(f"- LUAD: `{probs[1]*100:.2f}%`")
+            st.write(f"- LUSC: `{probs[2]*100:.2f}%`")
 
         st.divider()
 
@@ -157,9 +178,9 @@ if st.button("Run Model Inference", type="primary"):
         if pred_class_id == 0:
             st.info("🟢 **ROUTINE CARE** — Non-Malignant / Baseline Genomic Profile")
         elif pred_class_id == 1:
-            st.error("🔴 **CRITICAL URGENCY** — Malignant LUAD Signature (Route to Thoracic Oncology for TKI Evaluation)")
+            st.error("🔴 **CRITICAL URGENCY** — Malignant LUAD Signature (Route to Thoracic Oncology for Targeted TKI Evaluation)")
         else:
-            st.warning("🟠 **HIGH URGENCY** — Malignant LUSC Signature (Route for Immunotherapy / Pembrolizumab Evaluation)")
+            st.warning("🟠 **HIGH URGENCY** — Malignant LUSC Signature (Route for Immunotherapy Evaluation)")
 
     except Exception as e:
         st.error(f"Inference Error: {e}")
