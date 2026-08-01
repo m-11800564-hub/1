@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import streamlit as st
+import pandas as pd
 
 # =====================================================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -58,13 +59,12 @@ class ACCCIMMultiTaskModel(nn.Module):
         return clf_logits, reg_output, embeddings
 
 # =====================================================================
-# 3. ABSOLUTE PATH MODEL WEIGHT LOADING (STRICT EVAL MODE)
+# 3. MODEL WEIGHT LOADING
 # =====================================================================
 @st.cache_resource
 def load_acccim_model():
     model = ACCCIMMultiTaskModel(input_dim=25)
     
-    # Use absolute path relative to app.py location
     base_dir = os.path.dirname(os.path.abspath(__file__))
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
     
@@ -73,24 +73,19 @@ def load_acccim_model():
         state_dict = torch.load(weights_path, map_location=torch.device('cpu'))
         model.load_state_dict(state_dict)
     
-    # ALWAYS set to eval mode to freeze BatchNorm & Dropout behavior
     model.eval()
     return model, weights_found, weights_path
 
 model, weights_loaded, absolute_weights_path = load_acccim_model()
 
-# Silent weights validation alert (UI section removed)
+# Silent alert if weights missing
 if not weights_loaded:
     st.sidebar.error(f"⚠️ Model weights missing at: `{absolute_weights_path}`")
-
-if not weights_loaded:
-    st.error("⚠️ Model weights (`acccim_multitask_model_trained.pth`) were not detected. Running with un-initialized weights.")
 
 # =====================================================================
 # 4. ROBUST INFERENCE PIPELINE
 # =====================================================================
 def run_inference(input_text):
-    # Parsing input
     clean_values = [
         float(x.strip()) 
         for x in input_text.replace('\n', ',').replace(' ', ',').split(',') 
@@ -110,17 +105,15 @@ def run_inference(input_text):
     mad_val = np.median(np.abs(log_arr - median_val)) + 1e-6
     robust_z_arr = (log_arr - median_val) / (1.4826 * mad_val)
     
-    # EXPLICIT 2D BATCH DIMENSION SHAPE (1, 25)
+    # Explicit (1, 25) shape tensor
     model_input = torch.tensor(robust_z_arr, dtype=torch.float32).unsqueeze(0)
 
-    # Disable gradient computation during evaluation
     with torch.no_grad():
         logits, reg_out, _ = model(model_input)
         probs = F.softmax(logits, dim=1).numpy()[0]
         pathway_score = float(reg_out.numpy()[0][0])
         pred_class_id = int(torch.argmax(logits, dim=1).item())
 
-    # Driver Gene Panel Mapping
     luad_genes = ["EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1"]
     lusc_genes = ["SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A"]
 
@@ -156,7 +149,7 @@ def run_inference(input_text):
         status_color = "success"
     elif pred_class_id == 1:
         driver_status = f"{luad_genes[luad_max_idx]} Amplification / Low-Purity Target"
-        triage = "🔴 HIGH URGENCY — Low-Purity / Early LUAD Signature (Route to Thoracic Oncology)"
+        triage = "🔴 HIGH URGENCY — Low-Purity / Early LUAD Signature"
         status_color = "error"
     else:
         driver_status = f"{lusc_genes[lusc_max_sub_idx]} Lineage Driver Amplification"
@@ -184,27 +177,51 @@ with col_in:
         "Load Validation Preset:",
         [
             "Custom Input",
-            "Baseline Control",
-            "Early LUAD (KRAS Spike)",
-            "Subtle LUSC (TP63 Spike)",
-            "Inflammatory High Background"
+            "1. Low-Purity Early LUAD (EGFR Spike)",
+            "2. Early LUAD Sub-10 (STK11 Spike)",
+            "3. LUSC Lineage Marker (SOX2 Spike)",
+            "4. Clean Normal Baseline",
+            "5. Inflammatory High Background Noise Trap"
         ]
     )
     
     presets_map = {
-        "Baseline Control": "7.80, 8.10, 7.50, 8.20, 7.90, 8.00, 7.60, 8.30, 7.70, 8.10, 7.90, 8.20, 7.40, 7.80, 8.00, 7.60, 8.10, 7.50, 7.90, 8.20, 7.70, 8.00, 7.80, 8.10, 7.60",
-        "Early LUAD (KRAS Spike)": "6.20, 11.20, 5.90, 6.10, 6.40, 5.80, 6.00, 6.30, 5.70, 6.10, 5.90, 6.00, 4.80, 5.10, 4.60, 4.90, 5.00, 4.70, 4.80, 5.20, 4.90, 5.00, 4.70, 4.80, 5.10",
-        "Subtle LUSC (TP63 Spike)": "4.90, 5.20, 4.80, 5.10, 5.00, 4.70, 5.10, 4.90, 5.20, 4.80, 5.00, 4.90, 5.10, 10.40, 5.30, 5.00, 5.20, 4.80, 5.10, 4.90, 5.20, 5.00, 4.80, 5.10, 4.90",
-        "Inflammatory High Background": "8.20, 7.10, 8.90, 6.50, 8.40, 7.80, 8.10, 6.90, 8.60, 7.30, 8.00, 7.50, 7.90, 8.30, 6.80, 8.50, 7.20, 8.10, 7.60, 8.40, 6.90, 8.20, 7.70, 8.00, 7.40"
+        "1. Low-Purity Early LUAD (EGFR Spike)": "11.40, 5.80, 6.00, 5.70, 6.10, 5.90, 6.20, 5.80, 6.00, 5.70, 5.90, 6.10, 4.50, 4.80, 4.60, 4.90, 4.70, 4.40, 4.80, 5.00, 4.60, 4.90, 4.70, 4.80, 4.50",
+        "2. Early LUAD Sub-10 (STK11 Spike)": "5.80, 5.70, 6.00, 5.60, 5.90, 5.70, 6.10, 5.80, 5.90, 9.80, 5.70, 5.80, 4.20, 4.50, 4.30, 4.60, 4.40, 4.10, 4.50, 4.70, 4.30, 4.60, 4.40, 4.50, 4.20",
+        "3. LUSC Lineage Marker (SOX2 Spike)": "5.10, 4.90, 5.20, 5.00, 4.80, 5.10, 4.90, 5.30, 5.00, 4.80, 5.10, 4.90, 10.80, 5.20, 5.00, 5.30, 4.90, 5.10, 4.80, 5.20, 5.00, 4.90, 5.10, 4.80, 5.00",
+        "4. Clean Normal Baseline": "7.80, 8.10, 7.50, 8.20, 7.90, 8.00, 7.60, 8.30, 7.70, 8.10, 7.90, 8.20, 7.40, 7.80, 8.00, 7.60, 8.10, 7.50, 7.90, 8.20, 7.70, 8.00, 7.80, 8.10, 7.60",
+        "5. Inflammatory High Background Noise Trap": "8.20, 7.10, 8.90, 6.50, 8.40, 7.80, 8.10, 6.90, 8.60, 7.30, 8.00, 7.50, 7.90, 8.30, 6.80, 8.50, 7.20, 8.10, 7.60, 8.40, 6.90, 8.20, 7.70, 8.00, 7.40"
     }
 
     default_val = presets_map.get(preset, "")
     input_data = st.text_area(
         "25-Gene Vector Values (comma-separated):",
         value=default_val,
-        height=180,
+        height=140,
         placeholder="Enter 25 comma-separated float expression values..."
     )
+
+    # =====================================================================
+    # GENE ORDER REFERENCE TABLE (COLLAPSIBLE / EXPANSE)
+    # =====================================================================
+    with st.expander("📋 View 25-Gene Index Reference Table", expanded=True):
+        gene_panel_data = {
+            "Index": list(range(25)),
+            "Gene Symbol": [
+                # LUAD Panel (0 - 11)
+                "EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1",
+                # LUSC Panel (12 - 18)
+                "SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A",
+                # General Markers / Controls (19 - 24)
+                "ACTB", "GAPDH", "MYC", "RB1", "EGFR_ALT", "KRAS_ALT"
+            ],
+            "Panel Category": [
+                "LUAD Driver" if i < 12 else ("LUSC Lineage" if i < 19 else "Control / Marker") 
+                for i in range(25)
+            ]
+        }
+        df_gene_panel = pd.DataFrame(gene_panel_data)
+        st.dataframe(df_gene_panel, use_container_width=True, hide_index=True, height=220)
 
     run_button = st.button("🚀 Analyze Genomics", use_container_width=True, type="primary")
 
