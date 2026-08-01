@@ -10,21 +10,21 @@ import pandas as pd
 # 1. PAGE CONFIGURATION & STYLING
 # =====================================================================
 st.set_page_config(
-    page_title="ACCCIM Genomic Engine",
+    page_title="Genomic Neural Engine",
     page_icon="🧬",
     layout="wide"
 )
 
-st.title("🧬 ACCCIM Neural Engine")
-st.caption("Functional Genomic Inference Engine for Early-Stage Lung Histology Classification & Pathway Quantification")
+st.title("🧬 Functional Genomic Engine")
+st.caption("Neural Engine for Early-Stage Lung Histology Classification & Driver Pathway Quantification")
 st.markdown("---")
 
 # =====================================================================
 # 2. MODEL ARCHITECTURE
 # =====================================================================
-class ACCCIMMultiTaskModel(nn.Module):
+class GenomicMultiTaskModel(nn.Module):
     def __init__(self, input_dim=25, hidden_dim1=256, hidden_dim2=128):
-        super(ACCCIMMultiTaskModel, self).__init__()
+        super(GenomicMultiTaskModel, self).__init__()
         
         # Shared Encoder Backbone
         self.encoder = nn.Sequential(
@@ -62,8 +62,8 @@ class ACCCIMMultiTaskModel(nn.Module):
 # 3. MODEL WEIGHT LOADING
 # =====================================================================
 @st.cache_resource
-def load_acccim_model():
-    model = ACCCIMMultiTaskModel(input_dim=25)
+def load_genomic_model():
+    model = GenomicMultiTaskModel(input_dim=25)
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
@@ -76,7 +76,7 @@ def load_acccim_model():
     model.eval()
     return model, weights_found, weights_path
 
-model, weights_loaded, absolute_weights_path = load_acccim_model()
+model, weights_loaded, absolute_weights_path = load_genomic_model()
 
 # Silent alert if weights missing
 if not weights_loaded:
@@ -201,18 +201,12 @@ with col_in:
         placeholder="Enter 25 comma-separated float expression values..."
     )
 
-    # =====================================================================
-    # GENE ORDER REFERENCE TABLE (COLLAPSIBLE / EXPANSE)
-    # =====================================================================
     with st.expander("📋 View 25-Gene Index Reference Table", expanded=True):
         gene_panel_data = {
             "Index": list(range(25)),
             "Gene Symbol": [
-                # LUAD Panel (0 - 11)
                 "EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1",
-                # LUSC Panel (12 - 18)
                 "SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A",
-                # General Markers / Controls (19 - 24)
                 "ACTB", "GAPDH", "MYC", "RB1", "EGFR_ALT", "KRAS_ALT"
             ],
             "Panel Category": [
@@ -250,6 +244,20 @@ with col_out:
             for cls_name, prob in zip(classes, res["probs"]):
                 st.write(f"{cls_name}: **{prob*100:.1f}%**")
                 st.progress(float(prob))
+
+            # =====================================================================
+            # PATHWAY LOAD SCORE EXPLANATION BOX
+            # =====================================================================
+            st.markdown("---")
+            with st.expander("ℹ️ Understanding the Pathway Load Score", expanded=False):
+                st.markdown("""
+                The **Pathway Load Score** evaluates continuous oncogenic driver pathway activity (bounded from `0.000` to `1.000`):
+
+                * **`0.000 – 0.250` (Inactive / Control):** Healthy non-malignant tissue baseline.
+                * **`0.250 – 0.400` (Equivocal / Noise):** Minor physiological background variation.
+                * **`0.410 – 0.650` (Low-Purity / Early Malignancy):** Specific focal driver spike detected despite low tumor cell fraction or high background dilution.
+                * **`0.650 – 1.000` (High-Purity Malignancy):** Strong widespread oncogenic pathway activation.
+                """)
 
         except Exception as e:
             st.error(f"Inference Error: {str(e)}")
