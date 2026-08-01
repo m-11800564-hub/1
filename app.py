@@ -58,30 +58,43 @@ class ACCCIMMultiTaskModel(nn.Module):
         return clf_logits, reg_output, embeddings
 
 # =====================================================================
-# 3. LOAD MODEL WEIGHTS (CACHED)
+# 3. ABSOLUTE PATH MODEL WEIGHT LOADING (STRICT EVAL MODE)
 # =====================================================================
 @st.cache_resource
 def load_acccim_model():
     model = ACCCIMMultiTaskModel(input_dim=25)
-    weights_path = "acccim_multitask_model_trained.pth"
-    if os.path.exists(weights_path):
+    
+    # Use absolute path relative to app.py location
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
+    
+    weights_found = os.path.exists(weights_path)
+    if weights_found:
         state_dict = torch.load(weights_path, map_location=torch.device('cpu'))
         model.load_state_dict(state_dict)
-        model.eval()
-        return model, True
-    else:
-        model.eval()
-        return model, False
+    
+    # ALWAYS set to eval mode to freeze BatchNorm & Dropout behavior
+    model.eval()
+    return model, weights_found, weights_path
 
-model, weights_loaded = load_acccim_model()
+model, weights_loaded, absolute_weights_path = load_acccim_model()
+
+# Debugging Sidebar Status
+with st.sidebar:
+    st.header("⚙️ Engine Diagnostics")
+    st.write(f"**Weights File Detected:** `{weights_loaded}`")
+    st.write(f"**Model Training Mode:** `{model.training}` (Should be `False`)")
+    if not weights_loaded:
+        st.error(f"Missing file at path: `{absolute_weights_path}`")
 
 if not weights_loaded:
-    st.warning("⚠️ Weights file `acccim_multitask_model_trained.pth` not found. Running with un-initialized weights.")
+    st.error("⚠️ Model weights (`acccim_multitask_model_trained.pth`) were not detected. Running with un-initialized weights.")
 
 # =====================================================================
-# 4. INFERENCE PIPELINE
+# 4. ROBUST INFERENCE PIPELINE
 # =====================================================================
 def run_inference(input_text):
+    # Parsing input
     clean_values = [
         float(x.strip()) 
         for x in input_text.replace('\n', ',').replace(' ', ',').split(',') 
@@ -96,20 +109,22 @@ def run_inference(input_text):
     raw_arr = np.array(clean_values, dtype=np.float32)
     log_arr = np.log2(raw_arr + 1.0)
     
-    # Robust MAD Standardization
+    # Robust MAD Z-Score Standardization
     median_val = np.median(log_arr)
     mad_val = np.median(np.abs(log_arr - median_val)) + 1e-6
     robust_z_arr = (log_arr - median_val) / (1.4826 * mad_val)
     
+    # EXPLICIT 2D BATCH DIMENSION SHAPE (1, 25)
     model_input = torch.tensor(robust_z_arr, dtype=torch.float32).unsqueeze(0)
 
+    # Disable gradient computation during evaluation
     with torch.no_grad():
         logits, reg_out, _ = model(model_input)
         probs = F.softmax(logits, dim=1).numpy()[0]
         pathway_score = float(reg_out.numpy()[0][0])
         pred_class_id = int(torch.argmax(logits, dim=1).item())
 
-    # Driver Gene Annotations
+    # Driver Gene Panel Mapping
     luad_genes = ["EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1"]
     lusc_genes = ["SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A"]
 
@@ -141,11 +156,11 @@ def run_inference(input_text):
 
     if pred_class_id == 0:
         driver_status = "None Detected"
-        triage = "🟢 ROUTINE CARE — Non-Malignant Profile"
+        triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
         status_color = "success"
     elif pred_class_id == 1:
         driver_status = f"{luad_genes[luad_max_idx]} Amplification / Low-Purity Target"
-        triage = "🔴 HIGH URGENCY — Low-Purity / Early LUAD Signature"
+        triage = "🔴 HIGH URGENCY — Low-Purity / Early LUAD Signature (Route to Thoracic Oncology)"
         status_color = "error"
     else:
         driver_status = f"{lusc_genes[lusc_max_sub_idx]} Lineage Driver Amplification"
@@ -158,7 +173,6 @@ def run_inference(input_text):
         "pathway_score": pathway_score,
         "triage": triage,
         "probs": probs,
-        "raw_arr": raw_arr,
         "status_color": status_color
     }
 
@@ -170,7 +184,6 @@ col_in, col_out = st.columns([1, 1], gap="large")
 with col_in:
     st.subheader("📥 Input Expression Panel")
     
-    # Preset sample selector
     preset = st.selectbox(
         "Load Validation Preset:",
         [
@@ -206,7 +219,6 @@ with col_out:
         try:
             res = run_inference(input_data)
             
-            # Clinical Status Box
             if res["status_color"] == "error":
                 st.error(res["triage"])
             elif res["status_color"] == "warning":
@@ -214,7 +226,6 @@ with col_out:
             else:
                 st.success(res["triage"])
 
-            # Metric Cards
             m1, m2 = st.columns(2)
             m1.metric("Predicted Histology", res["histology"])
             m2.metric("Pathway Load Score", f"{res['pathway_score']:.3f}")
@@ -230,4 +241,4 @@ with col_out:
         except Exception as e:
             st.error(f"Inference Error: {str(e)}")
     else:
-        st.info("👈 Enter or select a 25-gene vector on the left and click **Analyze Genomics**.")
+        st.info("👈 Select a preset or enter a 25-gene vector on the left and click **Analyze Genomics**.")
