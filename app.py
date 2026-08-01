@@ -79,13 +79,9 @@ def load_acccim_model():
 
 model, weights_loaded, absolute_weights_path = load_acccim_model()
 
-# Debugging Sidebar Status
-with st.sidebar:
-    st.header("⚙️ Engine Diagnostics")
-    st.write(f"**Weights File Detected:** `{weights_loaded}`")
-    st.write(f"**Model Training Mode:** `{model.training}` (Should be `False`)")
-    if not weights_loaded:
-        st.error(f"Missing file at path: `{absolute_weights_path}`")
+# Silent weights validation alert (UI section removed)
+if not weights_loaded:
+    st.sidebar.error(f"⚠️ Model weights missing at: `{absolute_weights_path}`")
 
 if not weights_loaded:
     st.error("⚠️ Model weights (`acccim_multitask_model_trained.pth`) were not detected. Running with un-initialized weights.")
