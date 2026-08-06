@@ -12,7 +12,7 @@ jobs:
       - name: Ping Streamlit App
         run: |
           # REPLACE WITH YOUR ACTUAL STREAMLIT APP URL
-          URL="https://hwffymufoayjcxt8kxw2s5.streamlit.app"
+          URL="https://nkyg4wxgbhuw5r44rtz4mz.streamlit.app/"
           
           echo "Pinging Streamlit app at $URL..."
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
