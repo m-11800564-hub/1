@@ -1,0 +1,25 @@
+name: Streamlit Keep-Alive Ping
+
+on:
+  schedule:
+    - cron: '0 0 */3 * *' # Runs every 3 days
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          # REPLACE WITH YOUR ACTUAL STREAMLIT APP URL
+          URL="https://hwffymufoayjcxt8kxw2s5.streamlit.app"
+          
+          echo "Pinging Streamlit app at $URL..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+          echo "HTTP Response Code: $RESPONSE"
+          
+          if [ "$RESPONSE" -eq 200 ] || [ "$RESPONSE" -eq 302 ]; then
+            echo "Successfully pinged Streamlit app!"
+          else
+            echo "Warning: Received response code $RESPONSE"
+          fi
