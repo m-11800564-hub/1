@@ -2,24 +2,51 @@ name: Streamlit Keep-Alive Ping
 
 on:
   schedule:
-    - cron: '0 0 */3 * *' # Runs every 3 days
+    - cron: '0 */6 * * *' # Runs every 6 hours
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Streamlit App
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Playwright
         run: |
-          # REPLACE WITH YOUR ACTUAL STREAMLIT APP URL
-          URL="https://nkyg4wxgbhuw5r44rtz4mz.streamlit.app/"
-          
-          echo "Pinging Streamlit app at $URL..."
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
-          echo "HTTP Response Code: $RESPONSE"
-          
-          if [ "$RESPONSE" -eq 200 ] || [ "$RESPONSE" -eq 302 ]; then
-            echo "Successfully pinged Streamlit app!"
-          else
-            echo "Warning: Received response code $RESPONSE"
-          fi
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install chromium
+
+      - name: Wake Up Streamlit App
+        run: |
+          python -c "
+          from playwright.sync_api import sync_playwright
+          import time
+
+          url = 'https://hwffymufoayjcxt8kxw2s5.streamlit.app'
+          print(f'Visiting {url}...')
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              page.goto(url, timeout=60000)
+              
+              time.sleep(5)
+              
+              # Check for the Wake Up button and click it if found
+              try:
+                  wake_button = page.get_by_role('button', name='Yes, get this app back up!')
+                  if wake_button.is_visible():
+                      print('App was sleeping. Clicking wake up button...')
+                      wake_button.click()
+                      time.sleep(15)
+                  else:
+                      print('App is already awake!')
+              except Exception as e:
+                  print('App is already awake or button not present.')
+
+              browser.close()
+          "
