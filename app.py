@@ -88,9 +88,7 @@ model, scaler, weights_loaded, scaler_loaded = load_genomic_assets()
 
 if not weights_loaded:
     st.sidebar.error("⚠️ Model weights (`acccim_multitask_model_trained.pth`) missing!")
-# Double-check this block in app.py:
-if not scaler_loaded:
-    st.sidebar.warning("⚠️ Scaler parameters (`scaler_params.json`) missing! Using unscaled input.")
+
 # =====================================================================
 # 4. FIXED INFERENCE PIPELINE
 # =====================================================================
