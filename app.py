@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import streamlit as st
 import pandas as pd
+import joblib
 
 # =====================================================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -59,31 +60,39 @@ class GenomicMultiTaskModel(nn.Module):
         return clf_logits, reg_output, embeddings
 
 # =====================================================================
-# 3. MODEL WEIGHT LOADING
+# 3. MODEL WEIGHT & SCALER LOADING
 # =====================================================================
 @st.cache_resource
-def load_genomic_model():
+def load_genomic_assets():
     model = GenomicMultiTaskModel(input_dim=25)
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
+    scaler_path = os.path.join(base_dir, "scaler.pkl")
     
     weights_found = os.path.exists(weights_path)
+    scaler_found = os.path.exists(scaler_path)
+    
     if weights_found:
         state_dict = torch.load(weights_path, map_location=torch.device('cpu'))
         model.load_state_dict(state_dict)
     
-    model.eval()
-    return model, weights_found, weights_path
+    scaler = None
+    if scaler_found:
+        scaler = joblib.load(scaler_path)
+        
+    model.eval() # CRITICAL: Sets BatchNorm and Dropout to inference mode
+    return model, scaler, weights_found, scaler_found
 
-model, weights_loaded, absolute_weights_path = load_genomic_model()
+model, scaler, weights_loaded, scaler_loaded = load_genomic_assets()
 
-# Silent alert if weights missing
 if not weights_loaded:
-    st.sidebar.error(f"⚠️ Model weights missing at: `{absolute_weights_path}`")
+    st.sidebar.error("⚠️ Model weights (`acccim_multitask_model_trained.pth`) missing!")
+if not scaler_loaded:
+    st.sidebar.warning("⚠️ Training scaler (`scaler.pkl`) missing! Falling back to unscaled input.")
 
 # =====================================================================
-# 4. ROBUST INFERENCE PIPELINE
+# 4. FIXED INFERENCE PIPELINE
 # =====================================================================
 def run_inference(input_text):
     clean_values = [
@@ -97,16 +106,18 @@ def run_inference(input_text):
     else:
         clean_values = clean_values[:25]
 
-    raw_arr = np.array(clean_values, dtype=np.float32)
-    log_arr = np.log2(raw_arr + 1.0)
+    raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, -1)
     
-    # Robust MAD Z-Score Standardization
-    median_val = np.median(log_arr)
-    mad_val = np.median(np.abs(log_arr - median_val)) + 1e-6
-    robust_z_arr = (log_arr - median_val) / (1.4826 * mad_val)
+    # 1. Log Transform
+    log_arr = np.log2(np.clip(raw_arr, 0, None) + 1.0)
     
-    # Explicit (1, 25) shape tensor
-    model_input = torch.tensor(robust_z_arr, dtype=torch.float32).unsqueeze(0)
+    # 2. Standardize using Trained Scaler (NOT per-sample MAD!)
+    if scaler is not None:
+        scaled_arr = scaler.transform(log_arr)
+    else:
+        scaled_arr = log_arr # Fallback if scaler missing
+
+    model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
     with torch.no_grad():
         logits, reg_out, _ = model(model_input)
@@ -117,25 +128,9 @@ def run_inference(input_text):
     luad_genes = ["EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1"]
     lusc_genes = ["SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A"]
 
-    luad_max_idx = np.argmax(raw_arr[:12])
-    luad_max_val = raw_arr[luad_max_idx]
-
-    lusc_max_sub_idx = np.argmax(raw_arr[12:19])
-    lusc_max_idx = lusc_max_sub_idx + 12
-    lusc_max_val = raw_arr[lusc_max_idx]
-
-    bg_mean = np.mean(raw_arr)
-
-    # Dual-Subtype Triage Override
-    if pred_class_id == 0:
-        if luad_max_val > (bg_mean + 3.8):
-            pred_class_id = 1
-            pathway_score = max(pathway_score, 0.410)
-            probs = np.array([0.15, 0.73, 0.12])
-        elif lusc_max_val > (bg_mean + 3.8):
-            pred_class_id = 2
-            pathway_score = max(pathway_score, 0.410)
-            probs = np.array([0.15, 0.12, 0.73])
+    raw_flat = raw_arr.flatten()
+    luad_max_idx = np.argmax(raw_flat[:12])
+    lusc_max_sub_idx = np.argmax(raw_flat[12:19])
 
     class_map = {
         0: "Normal Baseline / Control", 
@@ -148,12 +143,12 @@ def run_inference(input_text):
         triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
         status_color = "success"
     elif pred_class_id == 1:
-        driver_status = f"{luad_genes[luad_max_idx]} Amplification / Low-Purity Target"
-        triage = "🔴 HIGH URGENCY — Low-Purity / Early LUAD Signature"
+        driver_status = f"{luad_genes[luad_max_idx]} Amplification Driver"
+        triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
         status_color = "error"
     else:
-        driver_status = f"{lusc_genes[lusc_max_sub_idx]} Lineage Driver Amplification"
-        triage = "🟠 HIGH URGENCY — Low-Purity / Malignant LUSC Signature"
+        driver_status = f"{lusc_genes[lusc_max_sub_idx]} Lineage Amplification Driver"
+        triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
         status_color = "warning"
 
     return {
@@ -244,20 +239,6 @@ with col_out:
             for cls_name, prob in zip(classes, res["probs"]):
                 st.write(f"{cls_name}: **{prob*100:.1f}%**")
                 st.progress(float(prob))
-
-            # =====================================================================
-            # PATHWAY LOAD SCORE EXPLANATION BOX
-            # =====================================================================
-            st.markdown("---")
-            with st.expander("ℹ️ Understanding the Pathway Load Score", expanded=False):
-                st.markdown("""
-                The **Pathway Load Score** evaluates continuous oncogenic driver pathway activity (bounded from `0.000` to `1.000`):
-
-                * **`0.000 – 0.250` (Inactive / Control):** Healthy non-malignant tissue baseline.
-                * **`0.250 – 0.400` (Equivocal / Noise):** Minor physiological background variation.
-                * **`0.410 – 0.650` (Low-Purity / Early Malignancy):** Specific focal driver spike detected despite low tumor cell fraction or high background dilution.
-                * **`0.650 – 1.000` (High-Purity Malignancy):** Strong widespread oncogenic pathway activation.
-                """)
 
         except Exception as e:
             st.error(f"Inference Error: {str(e)}")
