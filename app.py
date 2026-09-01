@@ -68,37 +68,47 @@ def load_genomic_assets():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
-    weights_dir = os.path.join(base_dir, "acccim_multitask_model_trained")
     scaler_path = os.path.join(base_dir, "scaler.json")
     
     weights_found = False
     scaler = None
+    loaded_file = "None"
 
-    # Load Model Weights
-    target_path = weights_path if os.path.exists(weights_path) else (weights_dir if os.path.exists(weights_dir) else None)
-    if target_path:
-        state_dict = torch.load(target_path, map_location=torch.device('cpu'), weights_only=False)
+    # Load Model Weights (.pth file)
+    if os.path.isfile(weights_path):
+        state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
         model.load_state_dict(state_dict)
         weights_found = True
+        loaded_file = weights_path
 
     # Load Scaler from JSON
-    if os.path.exists(scaler_path):
+    if os.path.isfile(scaler_path):
         with open(scaler_path, 'r') as f:
             scaler_data = json.load(f)
-        scaler_mean = np.array(scaler_data["mean"], dtype=np.float32)
-        scaler_scale = np.array(scaler_data["scale"], dtype=np.float32)
+        scaler_mean = np.array(scaler_data["mean"], dtype=np.float32).reshape(1, -1)
+        scaler_scale = np.array(scaler_data["scale"], dtype=np.float32).reshape(1, -1)
         
-        # Vectorized Standard Scaling: (x - mean) / scale
         scaler = lambda arr: (arr - scaler_mean) / scaler_scale
 
     model.eval()
-    return model, scaler, weights_found, scaler is not None
+    return model, scaler, weights_found, scaler is not None, loaded_file
 
-# Load model assets globally into the session
-model, scaler, weights_loaded, scaler_loaded = load_genomic_assets()
+model, scaler, weights_loaded, scaler_loaded, loaded_file = load_genomic_assets()
+
+# Visual Diagnostics in Sidebar
+st.sidebar.title("🔧 Model Diagnostics")
+if weights_loaded:
+    st.sidebar.success(f"Weights Loaded Successfully")
+else:
+    st.sidebar.error("❌ Failed to load model weights file!")
+
+if scaler_loaded:
+    st.sidebar.success("Scaler JSON Loaded Successfully")
+else:
+    st.sidebar.warning("⚠️ Scaler JSON missing; using raw values")
 
 # =====================================================================
-# 4. FIXED INFERENCE PIPELINE
+# 4. INFERENCE PIPELINE
 # =====================================================================
 def run_inference(input_text):
     clean_values = [
@@ -112,16 +122,13 @@ def run_inference(input_text):
     else:
         clean_values = clean_values[:25]
 
-    raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, -1)
+    raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, 25)
     
-    # 1. Log Transform
-    log_arr = np.log2(np.clip(raw_arr, 0, None) + 1.0)
-    
-    # 2. Standardize using Loaded Scaler Lambda
+    # Preprocessing check: Presets are already log-transformed, apply scaling directly
     if scaler is not None:
-        scaled_arr = scaler(log_arr)
+        scaled_arr = scaler(raw_arr)
     else:
-        scaled_arr = log_arr
+        scaled_arr = raw_arr
 
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
@@ -131,12 +138,16 @@ def run_inference(input_text):
         pathway_score = float(reg_out.numpy()[0][0])
         pred_class_id = int(torch.argmax(logits, dim=1).item())
 
-    luad_genes = ["EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1"]
-    lusc_genes = ["SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A"]
+    # Full Gene List (Indices 0 to 24)
+    all_genes = [
+        "EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1",
+        "SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A",
+        "ACTB", "GAPDH", "MYC", "RB1", "EGFR_ALT", "KRAS_ALT"
+    ]
 
     raw_flat = raw_arr.flatten()
-    luad_max_idx = np.argmax(raw_flat[:12])
-    lusc_max_sub_idx = np.argmax(raw_flat[12:19])
+    max_gene_idx = int(np.argmax(raw_flat))
+    dominant_gene = all_genes[max_gene_idx]
 
     class_map = {
         0: "Normal Baseline / Control", 
@@ -149,11 +160,11 @@ def run_inference(input_text):
         triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
         status_color = "success"
     elif pred_class_id == 1:
-        driver_status = f"{luad_genes[luad_max_idx]} Amplification Driver"
+        driver_status = f"{dominant_gene} Amplification Driver"
         triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
         status_color = "error"
     else:
-        driver_status = f"{lusc_genes[lusc_max_sub_idx]} Lineage Amplification Driver"
+        driver_status = f"{dominant_gene} Lineage Amplification Driver"
         triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
         status_color = "warning"
 
@@ -169,11 +180,6 @@ def run_inference(input_text):
 # =====================================================================
 # 5. USER INTERFACE
 # =====================================================================
-if not weights_loaded:
-    st.sidebar.warning("⚠️ Model weights missing. Running with baseline initializations.")
-if not scaler_loaded:
-    st.sidebar.warning("⚠️ Scaler configuration missing. Input scaling skipped.")
-
 col_in, col_out = st.columns([1, 1], gap="large")
 
 with col_in:
