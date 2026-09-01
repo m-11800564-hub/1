@@ -71,41 +71,55 @@ def load_genomic_assets():
     scaler_path = os.path.join(base_dir, "scaler.json")
     
     weights_found = False
-    scaler = None
+    scaler_found = False
     loaded_file = "None"
 
-    # Load Model Weights (.pth file)
+    # 1. Load PyTorch Model Weights
     if os.path.isfile(weights_path):
-        state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
-        model.load_state_dict(state_dict)
-        weights_found = True
-        loaded_file = weights_path
+        try:
+            state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
+            model.load_state_dict(state_dict)
+            weights_found = True
+            loaded_file = weights_path
+        except Exception:
+            weights_found = False
 
-    # Load Scaler from JSON
+    # 2. Load Scaler JSON or Apply Hardcoded Fallback
     if os.path.isfile(scaler_path):
-        with open(scaler_path, 'r') as f:
-            scaler_data = json.load(f)
-        scaler_mean = np.array(scaler_data["mean"], dtype=np.float32).reshape(1, -1)
-        scaler_scale = np.array(scaler_data["scale"], dtype=np.float32).reshape(1, -1)
-        
-        scaler = lambda arr: (arr - scaler_mean) / scaler_scale
+        try:
+            with open(scaler_path, 'r') as f:
+                scaler_data = json.load(f)
+            scaler_mean = np.array(scaler_data["mean"], dtype=np.float32).reshape(1, 25)
+            scaler_scale = np.array(scaler_data["scale"], dtype=np.float32).reshape(1, 25)
+            scaler_found = True
+        except Exception:
+            # Fallback if JSON is corrupted
+            scaler_mean = np.full((1, 25), 6.5, dtype=np.float32)
+            scaler_scale = np.full((1, 25), 1.8, dtype=np.float32)
+    else:
+        # Fallback normalization parameters matching standard log2 expression arrays
+        scaler_mean = np.full((1, 25), 6.5, dtype=np.float32)
+        scaler_scale = np.full((1, 25), 1.8, dtype=np.float32)
+
+    # Standard Z-Score Normalization: (X - mean) / scale
+    scaler = lambda arr: (arr - scaler_mean) / scaler_scale
 
     model.eval()
-    return model, scaler, weights_found, scaler is not None, loaded_file
+    return model, scaler, weights_found, scaler_found, loaded_file
 
 model, scaler, weights_loaded, scaler_loaded, loaded_file = load_genomic_assets()
 
-# Visual Diagnostics in Sidebar
-st.sidebar.title("🔧 Model Diagnostics")
+# Sidebar Diagnostics
+st.sidebar.title("🔧 System Diagnostics")
 if weights_loaded:
-    st.sidebar.success(f"Weights Loaded Successfully")
+    st.sidebar.success("Model Weights Loaded")
 else:
-    st.sidebar.error("❌ Failed to load model weights file!")
+    st.sidebar.error("❌ Model Weights Missing! Using Uninitialized Weights")
 
 if scaler_loaded:
-    st.sidebar.success("Scaler JSON Loaded Successfully")
+    st.sidebar.success("Scaler JSON Loaded")
 else:
-    st.sidebar.warning("⚠️ Scaler JSON missing; using raw values")
+    st.sidebar.warning("⚠️ Scaler JSON Missing: Using Fallback Z-Score Normalization")
 
 # =====================================================================
 # 4. INFERENCE PIPELINE
@@ -124,11 +138,8 @@ def run_inference(input_text):
 
     raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, 25)
     
-    # Preprocessing check: Presets are already log-transformed, apply scaling directly
-    if scaler is not None:
-        scaled_arr = scaler(raw_arr)
-    else:
-        scaled_arr = raw_arr
+    # Apply Standard Scaler
+    scaled_arr = scaler(raw_arr)
 
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
@@ -138,7 +149,6 @@ def run_inference(input_text):
         pathway_score = float(reg_out.numpy()[0][0])
         pred_class_id = int(torch.argmax(logits, dim=1).item())
 
-    # Full Gene List (Indices 0 to 24)
     all_genes = [
         "EGFR", "KRAS", "ALK", "MET", "ROS1", "RET", "ERBB2", "BRAF", "TP53", "STK11", "KEAP1", "NKX2-1",
         "SOX2", "TP63", "KRT5", "KRT6A", "PIK3CA", "FGFR1", "CDKN2A",
