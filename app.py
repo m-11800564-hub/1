@@ -1,11 +1,11 @@
 import os
+import json
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import streamlit as st
 import pandas as pd
-import joblib
 
 # =====================================================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -62,14 +62,11 @@ class GenomicMultiTaskModel(nn.Module):
 # =====================================================================
 # 3. MODEL WEIGHT & SCALER LOADING
 # =====================================================================
-import json
-
 @st.cache_resource
 def load_genomic_assets():
     model = GenomicMultiTaskModel(input_dim=25)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Path fallbacks
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
     weights_dir = os.path.join(base_dir, "acccim_multitask_model_trained")
     scaler_path = os.path.join(base_dir, "scaler.json")
@@ -78,12 +75,9 @@ def load_genomic_assets():
     scaler = None
 
     # Load Model Weights
-    if os.path.exists(weights_path):
-        state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
-        model.load_state_dict(state_dict)
-        weights_found = True
-    elif os.path.exists(weights_dir):
-        state_dict = torch.load(weights_dir, map_location=torch.device('cpu'), weights_only=False)
+    target_path = weights_path if os.path.exists(weights_path) else (weights_dir if os.path.exists(weights_dir) else None)
+    if target_path:
+        state_dict = torch.load(target_path, map_location=torch.device('cpu'), weights_only=False)
         model.load_state_dict(state_dict)
         weights_found = True
 
@@ -94,11 +88,15 @@ def load_genomic_assets():
         scaler_mean = np.array(scaler_data["mean"], dtype=np.float32)
         scaler_scale = np.array(scaler_data["scale"], dtype=np.float32)
         
-        # Simple lambda standardizer: (x - mean) / scale
+        # Vectorized Standard Scaling: (x - mean) / scale
         scaler = lambda arr: (arr - scaler_mean) / scaler_scale
 
     model.eval()
     return model, scaler, weights_found, scaler is not None
+
+# Load model assets globally into the session
+model, scaler, weights_loaded, scaler_loaded = load_genomic_assets()
+
 # =====================================================================
 # 4. FIXED INFERENCE PIPELINE
 # =====================================================================
@@ -119,11 +117,11 @@ def run_inference(input_text):
     # 1. Log Transform
     log_arr = np.log2(np.clip(raw_arr, 0, None) + 1.0)
     
-    # 2. Standardize using Trained Scaler (NOT per-sample MAD!)
+    # 2. Standardize using Loaded Scaler Lambda
     if scaler is not None:
-        scaled_arr = scaler.transform(log_arr)
+        scaled_arr = scaler(log_arr)
     else:
-        scaled_arr = log_arr # Fallback if scaler missing
+        scaled_arr = log_arr
 
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
@@ -171,6 +169,11 @@ def run_inference(input_text):
 # =====================================================================
 # 5. USER INTERFACE
 # =====================================================================
+if not weights_loaded:
+    st.sidebar.warning("⚠️ Model weights missing. Running with baseline initializations.")
+if not scaler_loaded:
+    st.sidebar.warning("⚠️ Scaler configuration missing. Input scaling skipped.")
+
 col_in, col_out = st.columns([1, 1], gap="large")
 
 with col_in:
