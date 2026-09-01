@@ -62,33 +62,43 @@ class GenomicMultiTaskModel(nn.Module):
 # =====================================================================
 # 3. MODEL WEIGHT & SCALER LOADING
 # =====================================================================
+import json
+
 @st.cache_resource
 def load_genomic_assets():
     model = GenomicMultiTaskModel(input_dim=25)
-    
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Path fallbacks
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
-    scaler_path = os.path.join(base_dir, "scaler.pkl")
+    weights_dir = os.path.join(base_dir, "acccim_multitask_model_trained")
+    scaler_path = os.path.join(base_dir, "scaler.json")
     
-    weights_found = os.path.exists(weights_path)
-    scaler_found = os.path.exists(scaler_path)
-    
-    if weights_found:
-        state_dict = torch.load(weights_path, map_location=torch.device('cpu'))
-        model.load_state_dict(state_dict)
-    
+    weights_found = False
     scaler = None
-    if scaler_found:
-        scaler = joblib.load(scaler_path)
+
+    # Load Model Weights
+    if os.path.exists(weights_path):
+        state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
+        model.load_state_dict(state_dict)
+        weights_found = True
+    elif os.path.exists(weights_dir):
+        state_dict = torch.load(weights_dir, map_location=torch.device('cpu'), weights_only=False)
+        model.load_state_dict(state_dict)
+        weights_found = True
+
+    # Load Scaler from JSON
+    if os.path.exists(scaler_path):
+        with open(scaler_path, 'r') as f:
+            scaler_data = json.load(f)
+        scaler_mean = np.array(scaler_data["mean"], dtype=np.float32)
+        scaler_scale = np.array(scaler_data["scale"], dtype=np.float32)
         
-    model.eval() # CRITICAL: Sets BatchNorm and Dropout to inference mode
-    return model, scaler, weights_found, scaler_found
+        # Simple lambda standardizer: (x - mean) / scale
+        scaler = lambda arr: (arr - scaler_mean) / scaler_scale
 
-model, scaler, weights_loaded, scaler_loaded = load_genomic_assets()
-
-if not weights_loaded:
-    st.sidebar.error("⚠️ Model weights (`acccim_multitask_model_trained.pth`) missing!")
-
+    model.eval()
+    return model, scaler, weights_found, scaler is not None
 # =====================================================================
 # 4. FIXED INFERENCE PIPELINE
 # =====================================================================
