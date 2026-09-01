@@ -57,7 +57,7 @@ class GenomicMultiTaskModel(nn.Module):
         return clf_logits, reg_output, embeddings
 
 # =====================================================================
-# 3. ASSET LOADING (MODEL & AUTO-SCALER)
+# 3. ASSET LOADING (.pth Weights & scaler.json)
 # =====================================================================
 @st.cache_resource
 def load_genomic_assets():
@@ -65,8 +65,11 @@ def load_genomic_assets():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
+    scaler_path = os.path.join(base_dir, "scaler.json")
+    
     weights_found = False
     scaler_found = False
+    scaler = None
 
     # 1. Load PyTorch Model Weights
     if os.path.isfile(weights_path):
@@ -74,33 +77,22 @@ def load_genomic_assets():
             state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
             model.load_state_dict(state_dict)
             weights_found = True
-        except Exception:
-            weights_found = False
+        except Exception as e:
+            st.sidebar.error(f"Error loading weights: {e}")
 
-    # 2. Check for Scaler JSON
-    for fname in ["scaler.json", "scaler_params.json"]:
-        p = os.path.join(base_dir, fname)
-        if os.path.isfile(p):
-            try:
-                with open(p, 'r') as f:
-                    data = json.load(f)
-                scaler_mean = np.array(data["mean"], dtype=np.float32).reshape(1, 25)
-                scaler_scale = np.array(data["scale"], dtype=np.float32).reshape(1, 25)
-                scaler_found = True
-                break
-            except Exception:
-                pass
-
-    # Dynamic Fallback: Z-Score Scaling Calibrated to TCGA Log Arrays
-    if not scaler_found:
-        scaler_mean = np.array([
-            6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0,
-            5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0,
-            7.8, 8.0, 7.8, 7.8, 7.8, 7.8
-        ], dtype=np.float32).reshape(1, 25)
-        scaler_scale = np.full((1, 25), 1.5, dtype=np.float32)
-
-    scaler = lambda arr: (arr - scaler_mean) / scaler_scale
+    # 2. Load Scaler JSON Parameters
+    if os.path.isfile(scaler_path):
+        try:
+            with open(scaler_path, 'r') as f:
+                scaler_data = json.load(f)
+            scaler_mean = np.array(scaler_data["mean"], dtype=np.float32).reshape(1, 25)
+            scaler_scale = np.array(scaler_data["scale"], dtype=np.float32).reshape(1, 25)
+            
+            # Normalization function: (X - mean) / scale
+            scaler = lambda arr: (arr - scaler_mean) / scaler_scale
+            scaler_found = True
+        except Exception as e:
+            st.sidebar.error(f"Error loading scaler JSON: {e}")
 
     model.eval()
     return model, scaler, weights_found, scaler_found
@@ -110,14 +102,14 @@ model, scaler, weights_loaded, scaler_loaded = load_genomic_assets()
 # Sidebar Diagnostics
 st.sidebar.title("🔧 System Diagnostics")
 if weights_loaded:
-    st.sidebar.success("Model Weights Loaded")
+    st.sidebar.success("Model Weights (.pth) Loaded")
 else:
-    st.sidebar.error("❌ Model Weights Missing!")
+    st.sidebar.error("❌ Model Weights (.pth) Missing!")
 
 if scaler_loaded:
-    st.sidebar.success("Scaler Parameters Loaded")
+    st.sidebar.success("Scaler Parameters (scaler.json) Loaded")
 else:
-    st.sidebar.warning("⚠️ Using Auto-Calibrated Z-Score Scaling")
+    st.sidebar.error("❌ Scaler JSON Missing!")
 
 # =====================================================================
 # 4. INFERENCE PIPELINE
@@ -136,8 +128,11 @@ def run_inference(input_text):
 
     raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, 25)
     
-    # Apply Standard Z-Score Normalization
-    scaled_arr = scaler(raw_arr)
+    # Apply standard Z-score scaling if loaded
+    if scaler is not None:
+        scaled_arr = scaler(raw_arr)
+    else:
+        scaled_arr = raw_arr
 
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
