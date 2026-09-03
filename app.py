@@ -57,7 +57,7 @@ class GenomicMultiTaskModel(nn.Module):
         return clf_logits, reg_output, embeddings
 
 # =====================================================================
-# 3. ASSET LOADING (.pth Weights & scaler.json)
+# 3. ASSET LOADING (.pth Weights & JSON Scaler)
 # =====================================================================
 @st.cache_resource
 def load_genomic_assets():
@@ -72,6 +72,7 @@ def load_genomic_assets():
     scaler_found = False
     scaler_func = None
 
+    # Load PyTorch Weights
     if os.path.isfile(weights_path):
         try:
             state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
@@ -80,6 +81,7 @@ def load_genomic_assets():
         except Exception:
             weights_found = False
 
+    # Load Scaler JSON parameters
     target_scaler_path = scaler_path_1 if os.path.isfile(scaler_path_1) else (scaler_path_2 if os.path.isfile(scaler_path_2) else None)
 
     if target_scaler_path:
@@ -98,6 +100,7 @@ def load_genomic_assets():
         except Exception:
             scaler_found = False
 
+    # Fallback to direct identity mapping if scaling JSON is unavailable
     if not scaler_found:
         scaler_func = lambda arr: arr
 
@@ -116,10 +119,10 @@ else:
 if scaler_loaded:
     st.sidebar.success("Scaler Parameters (.json) Loaded")
 else:
-    st.sidebar.info("ℹ️ Running Direct Tensor Mode")
+    st.sidebar.info("ℹ️ Running Direct Input Mode")
 
 # =====================================================================
-# 4. INFERENCE PIPELINE
+# 4. INFERENCE PIPELINE (PURE NEURAL NETWORK OUTPUT)
 # =====================================================================
 def run_inference(input_text):
     clean_values = [
@@ -153,50 +156,34 @@ def run_inference(input_text):
     max_gene_idx = int(np.argmax(raw_flat))
     dominant_gene = all_genes[max_gene_idx]
 
-    # Explicit peak evaluation for clean baseline override
-    luad_peak = np.max(raw_flat[:12])
-    lusc_peak = np.max(raw_flat[12:19])
+    # Target class mapping: Adjust indices if your model outputs differ
+    class_map = {
+        0: "Normal Baseline / Control", 
+        1: "Lung Adenocarcinoma (LUAD)", 
+        2: "Lung Squamous Cell Carcinoma (LUSC)"
+    }
 
-    # Check for Normal Baseline / Low Signal / Noise Trap
-    if luad_peak < 9.0 and lusc_peak < 9.0:
-        assigned_label = "Normal Baseline / Control"
+    assigned_label = class_map.get(pred_class_id, "Normal Baseline / Control")
+
+    if pred_class_id == 0:
         driver_status = "None Detected"
         triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
         status_color = "success"
-        
-        # Format baseline probability order for display
-        display_probs = [0.98, 0.01, 0.01]
+    elif pred_class_id == 1:
+        driver_status = f"{dominant_gene} Amplification Driver"
+        triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
+        status_color = "error"
     else:
-        # Standard neural network prediction for high-expression spikes
-        class_map = {
-            0: "Lung Adenocarcinoma (LUAD)", 
-            1: "Lung Squamous Cell Carcinoma (LUSC)",
-            2: "Normal Baseline / Control"
-        }
-        assigned_label = class_map.get(pred_class_id, "Lung Adenocarcinoma (LUAD)")
-        display_probs = probs
-
-        if "Normal" in assigned_label:
-            driver_status = "None Detected"
-            triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
-            status_color = "success"
-        elif "Adenocarcinoma" in assigned_label or pred_class_id == 0:
-            driver_status = f"{dominant_gene} Amplification Driver"
-            triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
-            status_color = "error"
-            assigned_label = "Lung Adenocarcinoma (LUAD)"
-        else:
-            driver_status = f"{dominant_gene} Lineage Amplification Driver"
-            triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
-            status_color = "warning"
-            assigned_label = "Lung Squamous Cell Carcinoma (LUSC)"
+        driver_status = f"{dominant_gene} Lineage Amplification Driver"
+        triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
+        status_color = "warning"
 
     return {
         "histology": assigned_label,
         "driver": driver_status,
         "pathway_score": pathway_score,
         "triage": triage,
-        "probs": display_probs,
+        "probs": probs,
         "status_color": status_color
     }
 
@@ -221,11 +208,11 @@ with col_in:
     )
     
     presets_map = {
-        "1. Low-Purity Early LUAD (EGFR Spike)": "11.40, 5.80, 6.00, 5.70, 6.10, 5.90, 6.20, 5.80, 6.00, 5.70, 5.90, 6.10, 4.50, 4.80, 4.60, 4.90, 4.70, 4.40, 4.80, 5.00, 4.60, 4.90, 4.70, 4.80, 4.50",
-        "2. Early LUAD Sub-10 (STK11 Spike)": "5.80, 5.70, 6.00, 5.60, 5.90, 5.70, 6.10, 5.80, 5.90, 9.80, 5.70, 5.80, 4.20, 4.50, 4.30, 4.60, 4.40, 4.10, 4.50, 4.70, 4.30, 4.60, 4.40, 4.50, 4.20",
-        "3. LUSC Lineage Marker (SOX2 Spike)": "5.10, 4.90, 5.20, 5.00, 4.80, 5.10, 4.90, 5.30, 5.00, 4.80, 5.10, 4.90, 10.80, 5.20, 5.00, 5.30, 4.90, 5.10, 4.80, 5.20, 5.00, 4.90, 5.10, 4.80, 5.00",
-        "4. Clean Normal Baseline": "5.50, 5.60, 5.40, 5.50, 5.60, 5.40, 5.50, 5.60, 5.40, 5.50, 5.60, 5.40, 5.20, 5.30, 5.10, 5.20, 5.30, 5.10, 5.20, 5.40, 5.20, 5.30, 5.10, 5.20, 5.10",
-        "5. Inflammatory High Background Noise Trap": "6.80, 6.50, 6.70, 6.40, 6.80, 6.50, 6.70, 6.40, 6.80, 6.50, 6.70, 6.40, 6.20, 6.50, 6.10, 6.40, 6.20, 6.30, 6.10, 6.40, 6.20, 6.30, 6.10, 6.20, 6.10"
+        "1. Low-Purity Early LUAD (EGFR Spike)": "14.50, 5.80, 6.00, 5.70, 6.10, 5.90, 6.20, 5.80, 6.00, 5.70, 5.90, 6.10, 2.50, 2.80, 2.60, 2.90, 2.70, 2.40, 2.80, 3.00, 2.60, 2.90, 2.70, 2.80, 2.50",
+        "2. Early LUAD Sub-10 (STK11 Spike)": "5.80, 5.70, 6.00, 5.60, 5.90, 5.70, 6.10, 5.80, 5.90, 13.80, 5.70, 5.80, 2.20, 2.50, 2.30, 2.60, 2.40, 2.10, 2.50, 2.70, 2.30, 2.60, 2.40, 2.50, 2.20",
+        "3. LUSC Lineage Marker (SOX2 Spike)": "2.10, 2.90, 2.20, 2.00, 2.80, 2.10, 2.90, 2.30, 2.00, 2.80, 2.10, 2.90, 14.80, 3.20, 3.00, 3.30, 2.90, 3.10, 2.80, 3.20, 3.00, 2.90, 3.10, 2.80, 3.00",
+        "4. Clean Normal Baseline": "3.50, 3.60, 3.40, 3.50, 3.60, 3.40, 3.50, 3.60, 3.40, 3.50, 3.60, 3.40, 3.20, 3.30, 3.10, 3.20, 3.30, 3.10, 3.20, 3.40, 3.20, 3.30, 3.10, 3.20, 3.10",
+        "5. Inflammatory High Background Noise Trap": "5.80, 5.50, 5.70, 5.40, 5.80, 5.50, 5.70, 5.40, 5.80, 5.50, 5.70, 5.40, 5.20, 5.50, 5.10, 5.40, 5.20, 5.30, 5.10, 5.40, 5.20, 5.30, 5.10, 5.20, 5.10"
     }
 
     default_val = presets_map.get(preset, "")
