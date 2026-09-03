@@ -258,6 +258,7 @@ with col_out:
         try:
             res = run_inference(input_data)
             
+            # 1. Triage Banner
             if res["status_color"] == "error":
                 st.error(res["triage"])
             elif res["status_color"] == "warning":
@@ -265,12 +266,34 @@ with col_out:
             else:
                 st.success(res["triage"])
 
+            # 2. Custom Metric Cards (Prevents "..." Truncation)
             m1, m2 = st.columns(2)
-            m1.metric("Predicted Histology", res["histology"])
-            m2.metric("Pathway Load Score", f"{res['pathway_score']:.3f}")
+            with m1:
+                st.markdown(
+                    f"""
+                    <div style="background-color: rgba(150, 150, 150, 0.08); padding: 12px; border-radius: 8px;">
+                        <span style="font-size: 0.85rem; color: #808495; font-weight: 500;">Predicted Histology</span><br>
+                        <span style="font-size: 1.25rem; font-weight: 700; word-wrap: break-word;">{res['histology'].upper()}</span>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+            
+            with m2:
+                st.markdown(
+                    f"""
+                    <div style="background-color: rgba(150, 150, 150, 0.08); padding: 12px; border-radius: 8px;">
+                        <span style="font-size: 0.85rem; color: #808495; font-weight: 500;">Pathway Load Score</span><br>
+                        <span style="font-size: 1.25rem; font-weight: 700;">{res['pathway_score']:.3f}</span>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
 
+            st.write("") # Spacing
             st.write(f"**Driver Mutation:** `{res['driver']}`")
 
+            # 3. Subtype Probabilities
             st.markdown("### Subtype Probabilities")
             classes = ["Normal Baseline", "Lung Adenocarcinoma (LUAD)", "Lung Squamous Cell (LUSC)"]
             for cls_name, prob in zip(classes, res["probs"]):
