@@ -57,7 +57,7 @@ class GenomicMultiTaskModel(nn.Module):
         return clf_logits, reg_output, embeddings
 
 # =====================================================================
-# 3. ASSET LOADING (.pth Weights & JSON Scaler)
+# 3. ASSET LOADING (.pth Weights & scaler.json)
 # =====================================================================
 @st.cache_resource
 def load_genomic_assets():
@@ -65,42 +65,36 @@ def load_genomic_assets():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
     weights_path = os.path.join(base_dir, "acccim_multitask_model_trained.pth")
-    scaler_path_1 = os.path.join(base_dir, "scaler.json")
-    scaler_path_2 = os.path.join(base_dir, "scaler_params.json")
+    scaler_path = os.path.join(base_dir, "scaler.json")
     
     weights_found = False
     scaler_found = False
     scaler_func = None
 
-    # Load PyTorch Weights
+    # Load PyTorch Model Weights
     if os.path.isfile(weights_path):
         try:
             state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
             model.load_state_dict(state_dict)
             weights_found = True
-        except Exception:
-            weights_found = False
+        except Exception as e:
+            st.sidebar.error(f"Weights error: {e}")
 
-    # Load Scaler JSON parameters
-    target_scaler_path = scaler_path_1 if os.path.isfile(scaler_path_1) else (scaler_path_2 if os.path.isfile(scaler_path_2) else None)
-
-    if target_scaler_path:
+    # Load Colab Scaler Parameters
+    if os.path.isfile(scaler_path):
         try:
-            with open(target_scaler_path, 'r') as f:
+            with open(scaler_path, 'r') as f:
                 scaler_data = json.load(f)
             
-            mean_vals = np.array(scaler_data["mean"], dtype=np.float32).flatten()
-            scale_vals = np.array(scaler_data["scale"], dtype=np.float32).flatten()
+            mean_vals = np.array(scaler_data["mean"], dtype=np.float32).reshape(1, 25)
+            scale_vals = np.array(scaler_data["scale"], dtype=np.float32).reshape(1, 25)
             
-            if len(mean_vals) == 25 and len(scale_vals) == 25:
-                scaler_mean = mean_vals.reshape(1, 25)
-                scaler_scale = scale_vals.reshape(1, 25)
-                scaler_func = lambda arr: (arr - scaler_mean) / np.maximum(scaler_scale, 1e-7)
-                scaler_found = True
-        except Exception:
-            scaler_found = False
+            # Exact Z-score transformation: (X - mean) / std
+            scaler_func = lambda arr: (arr - mean_vals) / np.maximum(scale_vals, 1e-7)
+            scaler_found = True
+        except Exception as e:
+            st.sidebar.error(f"Scaler error: {e}")
 
-    # Fallback to direct identity mapping if scaling JSON is unavailable
     if not scaler_found:
         scaler_func = lambda arr: arr
 
@@ -117,12 +111,12 @@ else:
     st.sidebar.error("❌ Model Weights (.pth) Missing!")
 
 if scaler_loaded:
-    st.sidebar.success("Scaler Parameters (.json) Loaded")
+    st.sidebar.success("Colab Scaler Parameters (.json) Loaded")
 else:
-    st.sidebar.info("ℹ️ Running Direct Input Mode")
+    st.sidebar.error("❌ Scaler Parameters (.json) Missing!")
 
 # =====================================================================
-# 4. INFERENCE PIPELINE (PURE NEURAL NETWORK OUTPUT)
+# 4. INFERENCE PIPELINE
 # =====================================================================
 def run_inference(input_text):
     clean_values = [
@@ -132,11 +126,13 @@ def run_inference(input_text):
     ]
     
     if len(clean_values) < 25:
-        clean_values += [5.0] * (25 - len(clean_values))
+        clean_values += [0.0] * (25 - len(clean_values))
     else:
         clean_values = clean_values[:25]
 
     raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, 25)
+    
+    # Scale input using the exact parameters exported from Colab
     scaled_arr = scaler(raw_arr)
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
@@ -156,7 +152,7 @@ def run_inference(input_text):
     max_gene_idx = int(np.argmax(raw_flat))
     dominant_gene = all_genes[max_gene_idx]
 
-    # Target class mapping: Adjust indices if your model outputs differ
+    # Model Class ID Target Map
     class_map = {
         0: "Normal Baseline / Control", 
         1: "Lung Adenocarcinoma (LUAD)", 
