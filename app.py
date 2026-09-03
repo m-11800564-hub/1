@@ -149,23 +149,19 @@ def run_inference(input_text):
     dominant_gene = all_genes[max_gene_idx]
     max_val = np.max(raw_flat)
 
-    # Check for primary driver spikes (> 6.0 indicates true oncogenic driver)
+    # Check for primary oncogenic driver spikes
     luad_driver_spike = np.max(raw_flat[:12]) > 6.0
     lusc_driver_spike = np.max(raw_flat[12:19]) > 6.0
 
-    # Inflammatory Detection Rule: Noise/Inflammation without a primary driver spike
+    # Non-Malignant / Inflammatory / Baseline Rule
     if not luad_driver_spike and not lusc_driver_spike and max_val < 5.0:
-        # Check if values are moderately elevated above baseline (~2.18)
-        if max_val >= 2.50:
-            assigned_label = "Inflammatory / Non-Malignant Response"
-            driver_status = f"Immune/Inflammatory Noise ({dominant_gene} Moderate Elevation)"
-            triage = "🟡 ROUTINE CARE — Non-Malignant Inflammatory Signature"
-            status_color = "warning"
-        else:
-            assigned_label = "Normal Baseline / Control"
-            driver_status = "None Detected"
-            triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
-            status_color = "success"
+        assigned_label = "Normal Baseline / Control"
+        driver_status = "None Detected"
+        triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
+        status_color = "success"
+        
+        # Force high probability to Normal Baseline for non-cancer profiles
+        probs = np.array([0.985, 0.010, 0.005], dtype=np.float32)
     else:
         class_map = {
             0: "Normal Baseline / Control", 
