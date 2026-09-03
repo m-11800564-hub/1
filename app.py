@@ -129,8 +129,6 @@ def run_inference(input_text):
         clean_values = clean_values[:25]
 
     raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, 25)
-    
-    # Standardize features via Colab scaler parameters
     scaled_arr = scaler(raw_arr)
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
@@ -149,27 +147,45 @@ def run_inference(input_text):
     raw_flat = raw_arr.flatten()
     max_gene_idx = int(np.argmax(raw_flat))
     dominant_gene = all_genes[max_gene_idx]
+    max_val = np.max(raw_flat)
 
-    class_map = {
-        0: "Normal Baseline / Control", 
-        1: "Lung Adenocarcinoma (LUAD)", 
-        2: "Lung Squamous Cell Carcinoma (LUSC)"
-    }
+    # Check for primary driver spikes (> 6.0 indicates true oncogenic driver)
+    luad_driver_spike = np.max(raw_flat[:12]) > 6.0
+    lusc_driver_spike = np.max(raw_flat[12:19]) > 6.0
 
-    assigned_label = class_map.get(pred_class_id, "Normal Baseline / Control")
-
-    if pred_class_id == 0:
-        driver_status = "None Detected"
-        triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
-        status_color = "success"
-    elif pred_class_id == 1:
-        driver_status = f"{dominant_gene} Amplification Driver"
-        triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
-        status_color = "error"
+    # Inflammatory Detection Rule: Noise/Inflammation without a primary driver spike
+    if not luad_driver_spike and not lusc_driver_spike and max_val < 5.0:
+        # Check if values are moderately elevated above baseline (~2.18)
+        if max_val >= 2.50:
+            assigned_label = "Inflammatory / Non-Malignant Response"
+            driver_status = f"Immune/Inflammatory Noise ({dominant_gene} Moderate Elevation)"
+            triage = "🟡 ROUTINE CARE — Non-Malignant Inflammatory Signature"
+            status_color = "warning"
+        else:
+            assigned_label = "Normal Baseline / Control"
+            driver_status = "None Detected"
+            triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
+            status_color = "success"
     else:
-        driver_status = f"{dominant_gene} Lineage Amplification Driver"
-        triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
-        status_color = "warning"
+        class_map = {
+            0: "Normal Baseline / Control", 
+            1: "Lung Adenocarcinoma (LUAD)", 
+            2: "Lung Squamous Cell Carcinoma (LUSC)"
+        }
+        assigned_label = class_map.get(pred_class_id, "Normal Baseline / Control")
+
+        if pred_class_id == 0:
+            driver_status = "None Detected"
+            triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
+            status_color = "success"
+        elif pred_class_id == 1:
+            driver_status = f"{dominant_gene} Amplification Driver"
+            triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
+            status_color = "error"
+        else:
+            driver_status = f"{dominant_gene} Lineage Amplification Driver"
+            triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
+            status_color = "warning"
 
     return {
         "histology": assigned_label,
