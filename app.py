@@ -134,6 +134,7 @@ def run_inference(input_text):
 
     with torch.no_grad():
         logits, reg_out, _ = model(model_input)
+        probs = F.softmax(logits, dim=1).numpy()[0]
         pathway_score = float(reg_out.numpy()[0][0])
         pred_class_id = int(torch.argmax(logits, dim=1).item())
 
@@ -148,19 +149,23 @@ def run_inference(input_text):
     dominant_gene = all_genes[max_gene_idx]
     max_val = np.max(raw_flat)
 
-    # Check for primary oncogenic driver spikes (> 6.0)
+    # Check for primary driver spikes (> 6.0 indicates true oncogenic driver)
     luad_driver_spike = np.max(raw_flat[:12]) > 6.0
     lusc_driver_spike = np.max(raw_flat[12:19]) > 6.0
 
-    # Non-Malignant / Inflammatory / Baseline Override
+    # Inflammatory Detection Rule: Noise/Inflammation without a primary driver spike
     if not luad_driver_spike and not lusc_driver_spike and max_val < 5.0:
-        assigned_label = "Normal Baseline / Control"
-        driver_status = "None Detected"
-        triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
-        status_color = "success"
-        
-        # Override probabilities to highlight Normal Baseline in the UI
-        probs = np.array([0.985, 0.010, 0.005], dtype=np.float32)
+        # Check if values are moderately elevated above baseline (~2.18)
+        if max_val >= 2.50:
+            assigned_label = "Inflammatory / Non-Malignant Response"
+            driver_status = f"Immune/Inflammatory Noise ({dominant_gene} Moderate Elevation)"
+            triage = "🟢 ROUTINE CARE — Non-Malignant Inflammatory Signature"
+            status_color = "success"
+        else:
+            assigned_label = "Normal Baseline / Control"
+            driver_status = "None Detected"
+            triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
+            status_color = "success"
     else:
         class_map = {
             0: "Normal Baseline / Control", 
@@ -173,17 +178,14 @@ def run_inference(input_text):
             driver_status = "None Detected"
             triage = "🟢 ROUTINE CARE — Non-Malignant / Baseline Profile"
             status_color = "success"
-            probs = F.softmax(logits, dim=1).numpy()[0]
         elif pred_class_id == 1:
             driver_status = f"{dominant_gene} Amplification Driver"
             triage = "🔴 HIGH URGENCY — Early / Malignant LUAD Signature"
             status_color = "error"
-            probs = F.softmax(logits, dim=1).numpy()[0]
         else:
             driver_status = f"{dominant_gene} Lineage Amplification Driver"
             triage = "🟠 HIGH URGENCY — Malignant LUSC Signature"
             status_color = "warning"
-            probs = F.softmax(logits, dim=1).numpy()[0]
 
     return {
         "histology": assigned_label,
