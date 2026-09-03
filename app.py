@@ -71,16 +71,14 @@ def load_genomic_assets():
     scaler_found = False
     scaler_func = None
 
-    # Load PyTorch Model Weights
     if os.path.isfile(weights_path):
         try:
             state_dict = torch.load(weights_path, map_location=torch.device('cpu'), weights_only=False)
             model.load_state_dict(state_dict)
             weights_found = True
         except Exception as e:
-            st.sidebar.error(f"Weights error: {e}")
+            st.sidebar.error(f"Weights loading error: {e}")
 
-    # Load Colab Scaler Parameters
     if os.path.isfile(scaler_path):
         try:
             with open(scaler_path, 'r') as f:
@@ -89,11 +87,11 @@ def load_genomic_assets():
             mean_vals = np.array(scaler_data["mean"], dtype=np.float32).reshape(1, 25)
             scale_vals = np.array(scaler_data["scale"], dtype=np.float32).reshape(1, 25)
             
-            # Exact Z-score transformation: (X - mean) / std
+            # Exact Z-score Transformation: (X - mean) / std
             scaler_func = lambda arr: (arr - mean_vals) / np.maximum(scale_vals, 1e-7)
             scaler_found = True
         except Exception as e:
-            st.sidebar.error(f"Scaler error: {e}")
+            st.sidebar.error(f"Scaler loading error: {e}")
 
     if not scaler_found:
         scaler_func = lambda arr: arr
@@ -126,13 +124,13 @@ def run_inference(input_text):
     ]
     
     if len(clean_values) < 25:
-        clean_values += [0.0] * (25 - len(clean_values))
+        clean_values += [2.18] * (25 - len(clean_values))
     else:
         clean_values = clean_values[:25]
 
     raw_arr = np.array(clean_values, dtype=np.float32).reshape(1, 25)
     
-    # Scale input using the exact parameters exported from Colab
+    # Standardize features via Colab scaler parameters
     scaled_arr = scaler(raw_arr)
     model_input = torch.tensor(scaled_arr, dtype=torch.float32)
 
@@ -152,7 +150,6 @@ def run_inference(input_text):
     max_gene_idx = int(np.argmax(raw_flat))
     dominant_gene = all_genes[max_gene_idx]
 
-    # Model Class ID Target Map
     class_map = {
         0: "Normal Baseline / Control", 
         1: "Lung Adenocarcinoma (LUAD)", 
@@ -203,12 +200,13 @@ with col_in:
         ]
     )
     
+    # Presets calibrated directly to the dataset mean (~2.18) and standard deviation (~0.57)
     presets_map = {
-        "1. Low-Purity Early LUAD (EGFR Spike)": "14.50, 5.80, 6.00, 5.70, 6.10, 5.90, 6.20, 5.80, 6.00, 5.70, 5.90, 6.10, 2.50, 2.80, 2.60, 2.90, 2.70, 2.40, 2.80, 3.00, 2.60, 2.90, 2.70, 2.80, 2.50",
-        "2. Early LUAD Sub-10 (STK11 Spike)": "5.80, 5.70, 6.00, 5.60, 5.90, 5.70, 6.10, 5.80, 5.90, 13.80, 5.70, 5.80, 2.20, 2.50, 2.30, 2.60, 2.40, 2.10, 2.50, 2.70, 2.30, 2.60, 2.40, 2.50, 2.20",
-        "3. LUSC Lineage Marker (SOX2 Spike)": "2.10, 2.90, 2.20, 2.00, 2.80, 2.10, 2.90, 2.30, 2.00, 2.80, 2.10, 2.90, 14.80, 3.20, 3.00, 3.30, 2.90, 3.10, 2.80, 3.20, 3.00, 2.90, 3.10, 2.80, 3.00",
-        "4. Clean Normal Baseline": "3.50, 3.60, 3.40, 3.50, 3.60, 3.40, 3.50, 3.60, 3.40, 3.50, 3.60, 3.40, 3.20, 3.30, 3.10, 3.20, 3.30, 3.10, 3.20, 3.40, 3.20, 3.30, 3.10, 3.20, 3.10",
-        "5. Inflammatory High Background Noise Trap": "5.80, 5.50, 5.70, 5.40, 5.80, 5.50, 5.70, 5.40, 5.80, 5.50, 5.70, 5.40, 5.20, 5.50, 5.10, 5.40, 5.20, 5.30, 5.10, 5.40, 5.20, 5.30, 5.10, 5.20, 5.10"
+        "1. Low-Purity Early LUAD (EGFR Spike)": "6.50, 2.18, 2.15, 2.18, 2.17, 2.39, 2.18, 2.16, 2.17, 2.18, 2.40, 2.18, 1.20, 1.15, 1.20, 1.30, 1.17, 1.15, 1.18, 1.17, 1.18, 1.20, 1.19, 1.18, 1.17",
+        "2. Early LUAD Sub-10 (STK11 Spike)": "2.22, 2.17, 2.15, 2.18, 2.17, 2.39, 2.18, 2.16, 2.17, 6.80, 2.40, 2.18, 1.20, 1.15, 1.20, 1.30, 1.17, 1.15, 1.18, 1.17, 1.18, 1.20, 1.19, 1.18, 1.17",
+        "3. LUSC Lineage Marker (SOX2 Spike)": "1.22, 1.17, 1.15, 1.18, 1.17, 1.39, 1.18, 1.16, 1.17, 1.18, 1.40, 1.18, 7.20, 1.15, 1.20, 1.30, 1.17, 1.15, 1.18, 1.17, 1.18, 1.20, 1.19, 1.18, 1.17",
+        "4. Clean Normal Baseline": "2.22, 2.17, 2.15, 2.18, 2.17, 2.39, 2.18, 2.16, 2.17, 2.18, 2.40, 2.18, 2.39, 2.16, 2.19, 2.39, 2.17, 2.15, 2.18, 2.17, 2.18, 2.20, 2.19, 2.18, 2.17",
+        "5. Inflammatory High Background Noise Trap": "2.70, 2.65, 2.60, 2.65, 2.60, 2.80, 2.65, 2.60, 2.65, 2.68, 2.90, 2.68, 2.80, 2.60, 2.65, 2.85, 2.60, 2.58, 2.65, 2.60, 2.62, 2.68, 2.65, 2.62, 2.60"
     }
 
     default_val = presets_map.get(preset, "")
